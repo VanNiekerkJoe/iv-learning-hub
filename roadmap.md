@@ -1,9 +1,9 @@
 # IV Consulting Learning Portal
 
 - [x] Confirm profile fields: full name, student ID, Student/Admin role, and module assignments.
-- [ ] Configure Cloud email sign-in and secure learning data: profiles, six modules, assigned access, content, progress, logs, and row-level access rules.
-- [ ] Build the branded student sign-in, dashboard, module library, protected viewing deterrents, watermark, and learning progress.
-- [ ] Build the non-technical admin content and student workflows, recovery bin, activity summaries, and help.
-- [ ] Add the plain-language admin quick start and deployment/configuration notes.
-- [ ] Verify the preview, relevant tests, and final project changes; commit the completed work.
-- [ ] Create the first admin account for test@gmail.com and two student accounts once their email addresses are provided; test@gmail.com is currently the only address supplied.
+- [x] Configure email sign-in, activate the private file bucket, and establish protected learning data and row-access rules.
+- [ ] Complete and verify the six sample modules and implement the branded sign-in, dashboard, module library, protected viewers, watermarking, and learning progress.
+- [ ] Build the admin content and student workflows, recent-deletion recovery, activity summaries, and help.
+- [ ] Add plain-language admin quick-start and deployment instructions.
+- [ ] Verify the completed portal in the preview, run tests, and commit the remaining work.
+- [ ] Create the admin account for test@gmail.com and two student accounts once their email addresses are provided.

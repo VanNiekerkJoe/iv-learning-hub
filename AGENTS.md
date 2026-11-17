@@ -28,3 +28,7 @@ use the editor.
   own key and store it in Secrets.
 - **Secrets.** Lovable manages them. Do not put secret values in the repo.
 <!-- LOVABLE:END -->
+
+<!-- AGENT-MEMORY:BEGIN -->
+- Keep the learning portal on TanStack Start and use authenticated Cloud-backed functions and private storage, because route-only protection cannot secure student records or course media.
+<!-- AGENT-MEMORY:END -->
