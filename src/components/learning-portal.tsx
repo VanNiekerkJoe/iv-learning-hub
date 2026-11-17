@@ -1,4 +1,5 @@
 import {
+  useCallback,
   useEffect,
   useRef,
   useState,
@@ -13,6 +14,8 @@ import {
   Check,
   CircleHelp,
   Clock3,
+  Folder,
+  FolderOpen,
   FileAudio,
   FileText,
   Film,
@@ -32,12 +35,15 @@ import {
 import {
   acceptCopyrightNotice,
   changePortalContentState,
+  deletePortalModule,
   getLearningDashboard,
   getLearningModule,
   getTemporaryContentAccess,
   invitePortalStudent,
   listAdminPortalData,
+  permanentlyDeletePortalContent,
   saveLearningProgress,
+  savePortalModule,
   savePortalContent,
   updateStudentPortalAccess,
 } from "@/lib/portal.functions";
@@ -52,8 +58,19 @@ type Module = Dashboard["modules"][number];
 type ContentItem = NonNullable<Dashboard["content"]>[number];
 type LearningProgress = Dashboard["progress"][number];
 type AdminProfile = AdminData["profiles"][number];
+type AdminModule = AdminData["modules"][number];
 type AdminItem = AdminData["items"][number];
 type ContentKind = Tables<"content_items">["type"];
+type ModuleDraft = { id?: string; title: string; description: string };
+type ContentDraft = {
+  id?: string;
+  moduleId: string;
+  type: ContentKind;
+  title: string;
+  description: string;
+  storagePath: string;
+  publish: boolean;
+};
 type AuthSession = NonNullable<
   Awaited<ReturnType<typeof supabase.auth.getSession>>["data"]["session"]
 >;
@@ -131,13 +148,27 @@ const PREVIEW_ADMIN_DATA: AdminData = {
     },
   ],
   modules: PREVIEW_MODULES,
-  items: PREVIEW_CONTENT.map((item) => ({
-    ...item,
-    storage_path: `preview/${item.id}`,
-    is_hidden: false,
-    deleted_at: null,
-    created_at: "2026-11-01T10:00:00.000Z",
-  })),
+  items: [
+    ...PREVIEW_CONTENT.map((item) => ({
+      ...item,
+      storage_path: `preview/${item.id}`,
+      is_hidden: false,
+      deleted_at: null,
+      created_at: "2026-11-01T10:00:00.000Z",
+    })),
+    {
+      id: "preview-expired-item",
+      module_id: PREVIEW_MODULE_ID,
+      type: "pdf",
+      title: "Expired sample item",
+      description: "Example of an item past its recovery window.",
+      storage_path: "preview/expired-item",
+      position: 4,
+      is_hidden: true,
+      deleted_at: "2026-10-01T10:00:00.000Z",
+      created_at: "2026-09-01T10:00:00.000Z",
+    },
+  ],
   logs: [
     {
       id: "preview-log-1",
@@ -581,9 +612,10 @@ function PortalFrame({
         </div>
       </header>
       <main className="portal-main">
-        {profile?.id === PREVIEW_PROFILE.id && (
+        {profile?.id.startsWith("local-preview-") && (
           <div className="preview-banner" role="status">
-            Local preview · sample data only · authentication is still required outside development
+            Interactive demo · sample data only · demo edits reset if you leave Admin or refresh;
+            real accounts and files require sign-in
           </div>
         )}
         {children}
@@ -759,7 +791,13 @@ function StudentDashboard({
   const visibleModules = modules.filter((module) =>
     `${module.title} ${module.description}`.toLowerCase().includes(search.toLowerCase()),
   );
-  const completed = progress.filter((item) => item.status === "completed").length;
+  const contentIds = new Set(content.map((item) => item.id));
+  const completed = new Set(
+    progress
+      .filter((item) => item.status === "completed" && contentIds.has(item.content_id))
+      .map((item) => item.content_id),
+  ).size;
+  const overallProgress = content.length ? Math.round((completed / content.length) * 100) : 0;
 
   return (
     <div className="portal-container student-page">
@@ -770,17 +808,58 @@ function StudentDashboard({
           <h1>
             Good to see you, <span>{profile.full_name.split(" ")[0] || "learner"}</span>
           </h1>
-          <p>Keep building your skills. Your learning journey is right here.</p>
+          <p>
+            {modules.length
+              ? "Your learning journey is ready when you are. Pick up where you left off."
+              : "Your learning space is ready. Assigned courses will appear here."}
+          </p>
+          <button
+            className="brand-button student-hero-action"
+            type="button"
+            onClick={onExplore}
+            disabled={!modules.length}
+          >
+            {modules.length
+              ? completed
+                ? "Continue learning"
+                : "Explore your courses"
+              : "No courses assigned"}
+            {Boolean(modules.length) && <ArrowRight aria-hidden="true" />}
+          </button>
         </div>
         <div className="student-id">
-          <span>STUDENT ID</span>
-          <strong>{profile.student_id}</strong>
+          <div
+            className="student-progress-ring"
+            role="progressbar"
+            aria-label="Overall course progress"
+            aria-valuenow={overallProgress}
+            aria-valuemin={0}
+            aria-valuemax={100}
+            style={{
+              background: `conic-gradient(var(--brand-orange) ${overallProgress}%, oklch(1 0 0 / 16%) 0)`,
+            }}
+          >
+            <div>
+              <strong>{overallProgress}%</strong>
+              <span>COMPLETE</span>
+            </div>
+          </div>
+          <div className="student-id-copy">
+            <span>YOUR STUDENT ID</span>
+            <strong>{profile.student_id}</strong>
+            <span>
+              {completed} of {content.length} learning {content.length === 1 ? "item" : "items"}
+            </span>
+          </div>
         </div>
       </section>
       <div className="dashboard-heading">
         <div>
           <p className="eyebrow">YOUR COURSES</p>
           <h2>My learning modules</h2>
+          <p className="dashboard-subheading">
+            Open a course to find your textbooks, videos, and podcasts.
+          </p>
         </div>
         <label className="search-field">
           <Search aria-hidden="true" />
@@ -820,19 +899,36 @@ function StudentDashboard({
               ? Math.round((completedItems / moduleItems.length) * 100)
               : 0;
             return (
-              <article className="module-card" key={module.id}>
+              <article
+                className="module-card"
+                key={module.id}
+                style={{ animationDelay: `${Math.min(index, 5) * 70}ms` }}
+              >
                 <div className={`module-art art-${index % 6}`}>
-                  <span className="module-number">0{index + 1}</span>
+                  <span className="module-number">{String(index + 1).padStart(2, "0")}</span>
                   <BookOpen aria-hidden="true" />
                 </div>
                 <div className="module-card-body">
-                  <span className="module-kicker">
-                    {moduleItems.length} learning {moduleItems.length === 1 ? "item" : "items"}
-                  </span>
+                  <div className="module-card-heading">
+                    <span className="module-kicker">
+                      {moduleItems.length} learning {moduleItems.length === 1 ? "item" : "items"}
+                    </span>
+                    <span
+                      className={`module-completion ${percentage === 100 ? "complete" : percentage ? "in-progress" : ""}`}
+                    >
+                      {percentage === 100
+                        ? "Complete"
+                        : percentage
+                          ? "In progress"
+                          : moduleItems.length
+                            ? "Ready"
+                            : "Coming soon"}
+                    </span>
+                  </div>
                   <h3>{module.title}</h3>
                   <p>{module.description || "Your learning materials are ready when you are."}</p>
                   <div className="module-progress-label">
-                    <span>Progress</span>
+                    <span>Your progress</span>
                     <strong>{percentage}%</strong>
                   </div>
                   <div
@@ -877,9 +973,7 @@ function StudentDashboard({
             <span>items completed</span>
           </div>
         </div>
-        <button type="button" className="summary-link" onClick={onExplore}>
-          Continue learning <ArrowRight aria-hidden="true" />
-        </button>
+        <p>Every step forward counts. Keep learning at your own pace.</p>
       </section>
     </div>
   );
@@ -1168,12 +1262,20 @@ function ContentViewer({
   );
 }
 
-function AdminWorkspace({ profile }: { profile: Profile }) {
-  const [data, setData] = useState<AdminData | null>(null);
-  const [assignments, setAssignments] = useState<Record<string, string[]>>({});
+function AdminWorkspace({ profile, preview = false }: { profile: Profile; preview?: boolean }) {
+  const [data, setData] = useState<AdminData | null>(preview ? PREVIEW_ADMIN_DATA : null);
+  const [assignments, setAssignments] = useState<Record<string, string[]>>(
+    preview
+      ? {
+          [PREVIEW_PROFILE.id]: PREVIEW_MODULES.slice(0, 2).map((module) => module.id),
+        }
+      : {},
+  );
   const [error, setError] = useState("");
-  const [loading, setLoading] = useState(true);
+  const [retryableError, setRetryableError] = useState(false);
+  const [loading, setLoading] = useState(!preview);
   const [tab, setTab] = useState<"overview" | "content" | "students" | "activity">("overview");
+  const [contentFolderId, setContentFolderId] = useState<string | null>(null);
   const [showForm, setShowForm] = useState(false);
   const [editing, setEditing] = useState<AdminItem | null>(null);
   const [busy, setBusy] = useState(false);
@@ -1182,10 +1284,23 @@ function AdminWorkspace({ profile }: { profile: Profile }) {
   const [includeDeleted, setIncludeDeleted] = useState(false);
   const [studentDialog, setStudentDialog] = useState<AdminProfile | null>(null);
   const [inviteOpen, setInviteOpen] = useState(false);
+  const [dialogError, setDialogError] = useState("");
+  const [moduleFormOpen, setModuleFormOpen] = useState(false);
+  const [moduleEditing, setModuleEditing] = useState<AdminModule | null>(null);
+  const contentFolder = data?.modules.find((module) => module.id === contentFolderId) ?? null;
 
-  async function refresh() {
+  const refresh = useCallback(async () => {
+    if (preview) {
+      setData((current) => current ?? PREVIEW_ADMIN_DATA);
+      setError("");
+      setRetryableError(false);
+      setLoading(false);
+      return;
+    }
+
     setLoading(true);
     setError("");
+    setRetryableError(false);
     try {
       const [portalData, assignmentResult] = await Promise.all([
         listAdminPortalData(),
@@ -1203,16 +1318,34 @@ function AdminWorkspace({ profile }: { profile: Profile }) {
       setAssignments(nextAssignments);
     } catch (caught) {
       setError(messageFrom(caught));
+      setRetryableError(true);
     } finally {
       setLoading(false);
     }
-  }
+  }, [preview]);
 
   useEffect(() => {
     void refresh();
-  }, []);
+  }, [refresh]);
 
   async function seedModules() {
+    if (preview) {
+      setError("");
+      setRetryableError(false);
+      setData((current) =>
+        current?.modules.length
+          ? current
+          : {
+              ...(current ?? PREVIEW_ADMIN_DATA),
+              modules: STARTER_MODULES.map((module, index) => ({
+                ...module,
+                id: `preview-module-${crypto.randomUUID()}-${index}`,
+              })),
+            },
+      );
+      setNotice("Sample folders added. Preview changes are temporary and won’t be saved.");
+      return;
+    }
     setBusy(true);
     setNotice("");
     try {
@@ -1224,32 +1357,175 @@ function AdminWorkspace({ profile }: { profile: Profile }) {
       await refresh();
     } catch (caught) {
       setError(messageFrom(caught));
+      setRetryableError(false);
     } finally {
       setBusy(false);
     }
   }
 
-  async function toggleItem(item: AdminItem, action: "hide" | "publish" | "delete" | "restore") {
+  async function saveModule(input: ModuleDraft) {
+    if (preview) {
+      setError("");
+      setRetryableError(false);
+      const duplicate = data?.modules.some(
+        (module) =>
+          module.id !== input.id && module.title.trim().toLowerCase() === input.title.toLowerCase(),
+      );
+      if (duplicate) throw new Error("A folder already uses that name. Choose a different name.");
+      const existing = data?.modules.find((module) => module.id === input.id);
+      const savedModule = {
+        id: existing?.id ?? `preview-module-${crypto.randomUUID()}`,
+        title: input.title.trim(),
+        description: input.description.trim(),
+        position:
+          existing?.position ??
+          Math.max(0, ...(data?.modules ?? []).map((module) => module.position)) + 1,
+      };
+      setData((current) =>
+        current
+          ? {
+              ...current,
+              modules: existing
+                ? current.modules.map((module) =>
+                    module.id === existing.id ? savedModule : module,
+                  )
+                : [...current.modules, savedModule],
+            }
+          : current,
+      );
+      setNotice("Sample folder saved. Preview changes are temporary and won’t be saved.");
+      return;
+    }
+    await savePortalModule({ data: input });
+    setNotice("Course folder saved.");
+    await refresh();
+  }
+
+  async function removeModule(module: AdminModule) {
+    if (busy) return;
+    if (
+      !window.confirm(
+        `Delete the "${module.title}" folder? It must be empty and have no student assignments. This cannot be undone.`,
+      )
+    ) {
+      return;
+    }
+    setBusy(true);
+    setError("");
+    setRetryableError(false);
+    setNotice("");
+    try {
+      if (preview) {
+        const hasContent = data?.items.some((item) => item.module_id === module.id);
+        const hasAssignments = Object.values(assignments).some((moduleIds) =>
+          moduleIds.includes(module.id),
+        );
+        if (hasContent || hasAssignments) {
+          throw new Error(
+            "This folder still has course content or student assignments. Remove those first, then try again.",
+          );
+        }
+        setData((current) =>
+          current
+            ? {
+                ...current,
+                modules: current.modules.filter((candidate) => candidate.id !== module.id),
+              }
+            : current,
+        );
+        setNotice("Sample folder deleted. Preview changes are temporary and won’t be saved.");
+      } else {
+        await deletePortalModule({ data: { id: module.id } });
+        setNotice("Course folder deleted.");
+        await refresh();
+      }
+    } catch (caught) {
+      setError(messageFrom(caught));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function toggleItem(
+    item: AdminItem,
+    action: "hide" | "publish" | "delete" | "restore" | "permanentlyDelete",
+  ) {
     if (
       action === "delete" &&
       !window.confirm(
-        `Remove "${item.title}"? Students will no longer see it. You can restore it within 30 days.`,
+        `Move "${item.title}" to Recently deleted? Students will no longer see it. You can restore it for 30 days.`,
       )
-    )
+    ) {
       return;
-    setBusy(true);
-    setNotice("");
-    try {
-      await changePortalContentState({ data: { id: item.id, action } });
+    }
+    if (
+      action === "permanentlyDelete" &&
+      !window.confirm(`Permanently delete "${item.title}" and its file? This cannot be undone.`)
+    ) {
+      return;
+    }
+    if (preview) {
+      setError("");
+      setRetryableError(false);
+      const isExpired = item.deleted_at ? !isRecentlyDeleted(item.deleted_at) : false;
+      if (action === "permanentlyDelete" && !isExpired) {
+        setError("Items can only be permanently deleted after 30 days in Recently deleted.");
+        return;
+      }
+      setData((current) => {
+        if (!current) return current;
+        if (action === "permanentlyDelete") {
+          return {
+            ...current,
+            items: current.items.filter((candidate) => candidate.id !== item.id),
+          };
+        }
+        return {
+          ...current,
+          items: current.items.map((candidate) =>
+            candidate.id === item.id
+              ? action === "delete"
+                ? { ...candidate, deleted_at: new Date().toISOString(), is_hidden: true }
+                : action === "restore"
+                  ? { ...candidate, deleted_at: null, is_hidden: true }
+                  : { ...candidate, is_hidden: action === "hide" }
+              : candidate,
+          ),
+        };
+      });
       setNotice(
         action === "delete"
-          ? "Item moved to Recently deleted."
+          ? "Sample item moved to Recently deleted."
           : action === "restore"
-            ? "Item restored and kept hidden."
+            ? "Sample item restored and kept hidden."
             : action === "hide"
-              ? "Item hidden from students."
-              : "Item published.",
+              ? "Sample item hidden from students."
+              : action === "publish"
+                ? "Sample item published."
+                : "Sample item permanently deleted.",
       );
+      return;
+    }
+    setBusy(true);
+    setError("");
+    setRetryableError(false);
+    setNotice("");
+    try {
+      if (action === "permanentlyDelete") {
+        await permanentlyDeletePortalContent({ data: { id: item.id } });
+        setNotice("Course item and private file permanently deleted.");
+      } else {
+        await changePortalContentState({ data: { id: item.id, action } });
+        setNotice(
+          action === "delete"
+            ? "Item moved to Recently deleted."
+            : action === "restore"
+              ? "Item restored and kept hidden."
+              : action === "hide"
+                ? "Item hidden from students."
+                : "Item published.",
+        );
+      }
       await refresh();
     } catch (caught) {
       setError(messageFrom(caught));
@@ -1262,24 +1538,51 @@ function AdminWorkspace({ profile }: { profile: Profile }) {
     event.preventDefault();
     if (!studentDialog) return;
     const formData = new FormData(event.currentTarget);
+    const moduleIds = Array.from(formData.getAll("student-module")).map(String);
+    const studentUpdate = {
+      studentId: studentDialog.id,
+      fullName: String(formData.get("fullName") ?? "").trim(),
+      role:
+        studentDialog.id === profile.id
+          ? studentDialog.role
+          : String(formData.get("role")) === "admin"
+            ? ("admin" as const)
+            : ("student" as const),
+      active:
+        studentDialog.id === profile.id ? studentDialog.active : formData.get("active") === "on",
+      moduleIds,
+    };
     setBusy(true);
-    setError("");
+    setDialogError("");
     try {
-      const moduleIds = Array.from(formData.getAll("student-module")).map(String);
-      await updateStudentPortalAccess({
-        data: {
-          studentId: studentDialog.id,
-          fullName: String(formData.get("fullName") ?? "").trim(),
-          role: String(formData.get("role")) === "admin" ? "admin" : "student",
-          active: formData.get("active") === "on",
-          moduleIds,
-        },
-      });
-      setNotice("Student access updated.");
+      if (preview) {
+        setData((current) =>
+          current
+            ? {
+                ...current,
+                profiles: current.profiles.map((person) =>
+                  person.id === studentDialog.id
+                    ? {
+                        ...person,
+                        full_name: studentUpdate.fullName,
+                        role: studentUpdate.role,
+                        active: studentUpdate.active,
+                      }
+                    : person,
+                ),
+              }
+            : current,
+        );
+        setAssignments((current) => ({ ...current, [studentDialog.id]: moduleIds }));
+        setNotice("Sample account updated. Preview changes are temporary and won’t be saved.");
+      } else {
+        await updateStudentPortalAccess({ data: studentUpdate });
+        setNotice("Student access updated.");
+      }
       setStudentDialog(null);
       await refresh();
     } catch (caught) {
-      setError(messageFrom(caught));
+      setDialogError(messageFrom(caught));
     } finally {
       setBusy(false);
     }
@@ -1292,14 +1595,41 @@ function AdminWorkspace({ profile }: { profile: Profile }) {
     moduleIds: string[];
   }) {
     setBusy(true);
-    setError("");
+    setDialogError("");
     try {
-      await invitePortalStudent({ data: input });
+      if (preview) {
+        const id = `preview-student-${crypto.randomUUID()}`;
+        setData((current) =>
+          current
+            ? {
+                ...current,
+                profiles: [
+                  {
+                    id,
+                    full_name: input.fullName,
+                    student_id: input.studentId,
+                    role: "student",
+                    active: true,
+                    created_at: new Date().toISOString(),
+                    terms_accepted_at: null,
+                    email: input.email,
+                  },
+                  ...current.profiles,
+                ],
+              }
+            : current,
+        );
+        setAssignments((current) => ({ ...current, [id]: input.moduleIds }));
+        setNotice("Sample student added. No email was sent; preview changes are temporary.");
+      } else {
+        await invitePortalStudent({ data: input });
+        setNotice("Student invitation sent.");
+      }
       setInviteOpen(false);
-      setNotice("Student invitation sent.");
       await refresh();
     } catch (caught) {
-      setError(messageFrom(caught));
+      setDialogError(messageFrom(caught));
+      throw caught;
     } finally {
       setBusy(false);
     }
@@ -1329,7 +1659,16 @@ function AdminWorkspace({ profile }: { profile: Profile }) {
               key={id}
               type="button"
               className={tab === id ? "active" : ""}
-              onClick={() => setTab(id)}
+              onClick={() => {
+                setTab(id);
+                setError("");
+                setRetryableError(false);
+                setNotice("");
+                if (id === "content") {
+                  setContentFolderId(null);
+                  setSearch("");
+                }
+              }}
             >
               <Icon aria-hidden="true" /> {label}
             </button>
@@ -1352,9 +1691,9 @@ function AdminWorkspace({ profile }: { profile: Profile }) {
               {tab === "overview"
                 ? `Welcome, ${profile.full_name.split(" ")[0]}`
                 : tab === "content"
-                  ? "Course content"
+                  ? (contentFolder?.title ?? "Course content")
                   : tab === "students"
-                    ? "Student accounts"
+                    ? "People & access"
                     : "Recent activity"}
             </h1>
           </div>
@@ -1362,20 +1701,31 @@ function AdminWorkspace({ profile }: { profile: Profile }) {
             <button
               className="brand-button"
               type="button"
-              onClick={() => {
-                setEditing(null);
-                setShowForm(true);
-              }}
+              onClick={
+                contentFolder
+                  ? () => {
+                      setEditing(null);
+                      setShowForm(true);
+                    }
+                  : () => {
+                      setModuleEditing(null);
+                      setModuleFormOpen(true);
+                    }
+              }
             >
-              <Plus aria-hidden="true" /> Add content
+              <Plus aria-hidden="true" />
+              {contentFolder ? "Add course content" : "Add module folder"}
             </button>
           )}
           {tab === "students" && (
             <button
               className="brand-button"
               type="button"
-              onClick={() => setInviteOpen(true)}
-              disabled={!data?.modules.length}
+              onClick={() => {
+                setDialogError("");
+                setInviteOpen(true);
+              }}
+              disabled={busy}
             >
               <Plus aria-hidden="true" /> Invite student
             </button>
@@ -1384,9 +1734,23 @@ function AdminWorkspace({ profile }: { profile: Profile }) {
         {error && (
           <div className="admin-error" role="alert">
             <span>{error}</span>
-            <button type="button" className="text-button" onClick={() => void refresh()}>
-              Retry
-            </button>
+            <div className="admin-error-actions">
+              {retryableError && (
+                <button type="button" className="text-button" onClick={() => void refresh()}>
+                  Retry loading
+                </button>
+              )}
+              <button
+                type="button"
+                className="text-button"
+                onClick={() => {
+                  setError("");
+                  setRetryableError(false);
+                }}
+              >
+                Dismiss
+              </button>
+            </div>
           </div>
         )}
         {notice && (
@@ -1471,25 +1835,57 @@ function AdminWorkspace({ profile }: { profile: Profile }) {
             </div>
           </div>
         ) : tab === "content" ? (
-          <div className="admin-table-card">
+          <div className="admin-content-browser">
             {!data?.modules.length ? (
-              <div className="admin-empty small">
-                <h2>No learning modules yet</h2>
-                <p>Create starter modules from Overview before adding content.</p>
-                <button className="outline-button" type="button" onClick={() => setTab("overview")}>
-                  Go to overview <ArrowRight aria-hidden="true" />
-                </button>
+              <div className="admin-table-card">
+                <div className="admin-empty small">
+                  <h2>No learning modules yet</h2>
+                  <p>Create the starter module folders before adding course materials.</p>
+                  <button
+                    className="outline-button"
+                    type="button"
+                    onClick={() => setTab("overview")}
+                  >
+                    Go to overview <ArrowRight aria-hidden="true" />
+                  </button>
+                </div>
               </div>
-            ) : (
+            ) : contentFolder ? (
               <>
-                <div className="table-toolbar">
+                <div className="folder-path">
+                  <button
+                    className="folder-back"
+                    type="button"
+                    onClick={() => {
+                      setContentFolderId(null);
+                      setSearch("");
+                    }}
+                  >
+                    <ArrowLeft aria-hidden="true" />
+                    All module folders
+                  </button>
+                  <span className="folder-path-divider">/</span>
+                  <span className="folder-path-icon">
+                    <FolderOpen aria-hidden="true" />
+                  </span>
+                  <strong>{contentFolder.title}</strong>
+                  <span className="folder-path-count">
+                    {
+                      (data?.items ?? []).filter(
+                        (item) => item.module_id === contentFolder.id && !item.deleted_at,
+                      ).length
+                    }{" "}
+                    items
+                  </span>
+                </div>
+                <div className="table-toolbar folder-items-toolbar">
                   <label className="search-field">
                     <Search aria-hidden="true" />
                     <input
                       value={search}
                       onChange={(event) => setSearch(event.target.value)}
-                      placeholder="Search content"
-                      aria-label="Search content"
+                      placeholder="Search this module"
+                      aria-label={`Search ${contentFolder.title}`}
                     />
                   </label>
                   <label className="checkbox-label">
@@ -1497,29 +1893,122 @@ function AdminWorkspace({ profile }: { profile: Profile }) {
                       type="checkbox"
                       checked={includeDeleted}
                       onChange={(event) => setIncludeDeleted(event.target.checked)}
-                    />{" "}
+                    />
                     Recently deleted
                   </label>
                 </div>
-                <ContentAdminList
-                  items={data?.items ?? []}
-                  modules={data?.modules ?? []}
-                  search={search}
-                  includeDeleted={includeDeleted}
-                  busy={busy}
-                  onEdit={(item) => {
-                    setEditing(item);
-                    setShowForm(true);
-                  }}
-                  onAction={(item, action) => void toggleItem(item, action)}
-                />
+                <div className="admin-table-card">
+                  <ContentAdminList
+                    items={(data?.items ?? []).filter(
+                      (item) => item.module_id === contentFolder.id,
+                    )}
+                    modules={[contentFolder]}
+                    search={search}
+                    includeDeleted={includeDeleted}
+                    busy={busy}
+                    onEdit={(item) => {
+                      setEditing(item);
+                      setShowForm(true);
+                    }}
+                    onAction={(item, action) => void toggleItem(item, action)}
+                  />
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="folder-intro">
+                  <div>
+                    <p className="eyebrow">YOUR COURSE LIBRARY</p>
+                    <h2>Choose a module folder</h2>
+                    <p>Open a folder to find and manage its textbooks, videos, and podcasts.</p>
+                  </div>
+                  <label className="search-field">
+                    <Search aria-hidden="true" />
+                    <input
+                      value={search}
+                      onChange={(event) => setSearch(event.target.value)}
+                      placeholder="Find a module"
+                      aria-label="Search module folders"
+                    />
+                  </label>
+                </div>
+                <div className="course-folder-grid">
+                  {(data?.modules ?? [])
+                    .filter((module) =>
+                      `${module.title} ${module.description}`
+                        .toLowerCase()
+                        .includes(search.toLowerCase()),
+                    )
+                    .map((module) => {
+                      const items = (data?.items ?? []).filter(
+                        (item) => item.module_id === module.id && !item.deleted_at,
+                      );
+                      const publishedCount = items.filter((item) => !item.is_hidden).length;
+                      return (
+                        <article className="course-folder-card" key={module.id}>
+                          <button
+                            className="course-folder-main"
+                            type="button"
+                            onClick={() => {
+                              setSearch("");
+                              setContentFolderId(module.id);
+                            }}
+                            aria-label={`Open ${module.title} folder, ${items.length} items`}
+                          >
+                            <span className="course-folder-icon">
+                              <Folder aria-hidden="true" />
+                            </span>
+                            <span className="module-kicker">COURSE FOLDER</span>
+                            <strong>{module.title}</strong>
+                            <span className="course-folder-description">
+                              {module.description || "Open this folder to manage course materials."}
+                            </span>
+                            <span className="course-folder-count">
+                              <FileText aria-hidden="true" />
+                              {items.length} {items.length === 1 ? "item" : "items"} ·{" "}
+                              {publishedCount} published
+                            </span>
+                            <span className="course-folder-open">
+                              Open folder <ArrowRight aria-hidden="true" />
+                            </span>
+                          </button>
+                          <div className="course-folder-actions">
+                            <button
+                              className="outline-button"
+                              type="button"
+                              disabled={busy}
+                              onClick={() => {
+                                setModuleEditing(module);
+                                setModuleFormOpen(true);
+                              }}
+                            >
+                              Edit folder
+                            </button>
+                            <button
+                              className="danger-outline-button"
+                              type="button"
+                              disabled={busy}
+                              onClick={() => void removeModule(module)}
+                            >
+                              <Trash2 aria-hidden="true" /> Delete
+                            </button>
+                          </div>
+                        </article>
+                      );
+                    })}
+                  {!data?.modules.some((module) =>
+                    `${module.title} ${module.description}`
+                      .toLowerCase()
+                      .includes(search.toLowerCase()),
+                  ) && <p className="empty-search">No module folders match “{search}”.</p>}
+                </div>
               </>
             )}
           </div>
         ) : tab === "students" ? (
           <div className="admin-table-card">
             <div className="table-toolbar">
-              <p>Review student accounts and assigned course access.</p>
+              <p>Review student and administrator accounts and assigned course access.</p>
               <span className="student-count">{data?.profiles.length ?? 0} accounts</span>
             </div>
             <div className="student-list">
@@ -1541,7 +2030,10 @@ function AdminWorkspace({ profile }: { profile: Profile }) {
                   <button
                     className="outline-button"
                     type="button"
-                    onClick={() => setStudentDialog(person)}
+                    onClick={() => {
+                      setDialogError("");
+                      setStudentDialog(person);
+                    }}
                   >
                     Manage <ArrowRight aria-hidden="true" />
                   </button>
@@ -1594,15 +2086,58 @@ function AdminWorkspace({ profile }: { profile: Profile }) {
           links. Screen recording and photography cannot be fully blocked.
         </p>
       </section>
+      {moduleFormOpen && (
+        <ModuleForm
+          item={moduleEditing}
+          preview={preview}
+          onClose={() => setModuleFormOpen(false)}
+          onSave={saveModule}
+        />
+      )}
       {showForm && data && (
         <ContentForm
           modules={data.modules}
           item={editing}
+          initialModuleId={contentFolder?.id ?? ""}
+          preview={preview}
           onClose={() => setShowForm(false)}
-          onSaved={(message) => {
+          onSaved={(message, savedContent) => {
             setShowForm(false);
+            if (preview) {
+              const savedItem: AdminItem = {
+                id: savedContent.id ?? `preview-content-${crypto.randomUUID()}`,
+                module_id: savedContent.moduleId,
+                type: savedContent.type,
+                title: savedContent.title,
+                description: savedContent.description,
+                storage_path: savedContent.storagePath,
+                position:
+                  data.items.find((item) => item.id === savedContent.id)?.position ??
+                  Math.max(
+                    0,
+                    ...data.items
+                      .filter((item) => item.module_id === savedContent.moduleId)
+                      .map((item) => item.position),
+                  ) + 1,
+                is_hidden: !savedContent.publish,
+                deleted_at: null,
+                created_at:
+                  data.items.find((item) => item.id === savedContent.id)?.created_at ??
+                  new Date().toISOString(),
+              };
+              setData((current) =>
+                current
+                  ? {
+                      ...current,
+                      items: current.items.some((item) => item.id === savedItem.id)
+                        ? current.items.map((item) => (item.id === savedItem.id ? savedItem : item))
+                        : [...current.items, savedItem],
+                    }
+                  : current,
+              );
+            }
             setNotice(message);
-            void refresh();
+            if (!preview) void refresh();
           }}
         />
       )}
@@ -1610,8 +2145,9 @@ function AdminWorkspace({ profile }: { profile: Profile }) {
         <InviteStudentForm
           modules={data.modules}
           busy={busy}
+          preview={preview}
           onClose={() => setInviteOpen(false)}
-          onInvite={(input) => void inviteStudent(input)}
+          onInvite={inviteStudent}
         />
       )}
       {studentDialog && data && (
@@ -1625,17 +2161,25 @@ function AdminWorkspace({ profile }: { profile: Profile }) {
             <header className="viewer-header">
               <div>
                 <p className="eyebrow">ACCOUNT SETTINGS</p>
-                <h2 id="student-edit-heading">Manage student</h2>
+                <h2 id="student-edit-heading">Manage account</h2>
               </div>
               <button
                 className="icon-button"
                 type="button"
-                onClick={() => setStudentDialog(null)}
+                onClick={() => {
+                  setDialogError("");
+                  setStudentDialog(null);
+                }}
                 aria-label="Close"
+                disabled={busy}
               >
                 <X aria-hidden="true" />
               </button>
             </header>
+            <p className="form-hint account-identifier">
+              {studentDialog.email || "Email is unavailable"} · Student ID{" "}
+              {studentDialog.student_id}
+            </p>
             <form className="admin-form" onSubmit={(event) => void saveStudent(event)}>
               <label htmlFor="student-name">Full name</label>
               <input
@@ -1645,15 +2189,35 @@ function AdminWorkspace({ profile }: { profile: Profile }) {
                 defaultValue={studentDialog.full_name}
                 required
               />
-              <label>Role</label>
-              <select className="portal-input" name="role" defaultValue={studentDialog.role}>
+              <label htmlFor="student-role">Account type</label>
+              <select
+                id="student-role"
+                className="portal-input"
+                name="role"
+                defaultValue={studentDialog.role}
+                disabled={studentDialog.id === profile.id}
+              >
                 <option value="student">Student</option>
                 <option value="admin">Administrator</option>
               </select>
               <label className="checkbox-label">
-                <input type="checkbox" name="active" defaultChecked={studentDialog.active} />{" "}
-                Account active
+                <input
+                  type="checkbox"
+                  name="active"
+                  defaultChecked={studentDialog.active}
+                  disabled={studentDialog.id === profile.id}
+                />{" "}
+                Allow this account to sign in
               </label>
+              {studentDialog.id === profile.id && (
+                <p className="form-hint">
+                  Your signed-in administrator account cannot be deactivated or changed to a
+                  student.
+                </p>
+              )}
+              <p className="form-hint">
+                Turning this off blocks sign-in but keeps the account’s course history.
+              </p>
               <fieldset>
                 <legend>Assigned learning modules</legend>
                 {data.modules.map((module) => (
@@ -1668,11 +2232,20 @@ function AdminWorkspace({ profile }: { profile: Profile }) {
                   </label>
                 ))}
               </fieldset>
+              {dialogError && (
+                <p className="inline-error" role="alert">
+                  {dialogError}
+                </p>
+              )}
               <div className="form-actions">
                 <button
                   className="outline-button"
                   type="button"
-                  onClick={() => setStudentDialog(null)}
+                  onClick={() => {
+                    setDialogError("");
+                    setStudentDialog(null);
+                  }}
+                  disabled={busy}
                 >
                   Cancel
                 </button>
@@ -1700,27 +2273,134 @@ function StatCard({ label, value, icon }: { label: string; value: string; icon: 
   );
 }
 
+function ModuleForm({
+  item,
+  preview,
+  onClose,
+  onSave,
+}: {
+  item: AdminModule | null;
+  preview: boolean;
+  onClose: () => void;
+  onSave: (input: ModuleDraft) => Promise<void>;
+}) {
+  const [title, setTitle] = useState(item?.title ?? "");
+  const [description, setDescription] = useState(item?.description ?? "");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setBusy(true);
+    setError("");
+    try {
+      await onSave({
+        ...(item ? { id: item.id } : {}),
+        title: title.trim(),
+        description: description.trim(),
+      });
+      onClose();
+    } catch (caught) {
+      setError(messageFrom(caught));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="viewer-backdrop">
+      <section
+        className="student-edit-card"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="module-form-heading"
+      >
+        <header className="viewer-header">
+          <div>
+            <p className="eyebrow">{item ? "COURSE FOLDER" : "NEW COURSE FOLDER"}</p>
+            <h2 id="module-form-heading">{item ? "Edit folder details" : "Add a module folder"}</h2>
+          </div>
+          <button
+            className="icon-button"
+            type="button"
+            onClick={onClose}
+            aria-label="Close"
+            disabled={busy}
+          >
+            <X aria-hidden="true" />
+          </button>
+        </header>
+        <form className="admin-form" onSubmit={(event) => void submit(event)}>
+          <label htmlFor="module-title">Folder name</label>
+          <input
+            id="module-title"
+            className="portal-input"
+            value={title}
+            onChange={(event) => setTitle(event.target.value)}
+            maxLength={100}
+            required
+            autoFocus
+          />
+          <label htmlFor="module-description">
+            Short description <span>(optional)</span>
+          </label>
+          <textarea
+            id="module-description"
+            className="portal-input form-textarea"
+            value={description}
+            onChange={(event) => setDescription(event.target.value)}
+            maxLength={500}
+            rows={3}
+          />
+          {preview && (
+            <p className="form-hint">
+              This is a sample folder. Changes reset if you leave Admin or refresh the preview.
+            </p>
+          )}
+          {error && (
+            <p className="inline-error" role="alert">
+              {error}
+            </p>
+          )}
+          <div className="form-actions">
+            <button className="outline-button" type="button" onClick={onClose} disabled={busy}>
+              Cancel
+            </button>
+            <button className="brand-button" type="submit" disabled={busy || !title.trim()}>
+              {busy && <LoaderCircle className="spin" aria-hidden="true" />}
+              {busy ? "Saving…" : item ? "Save folder" : "Create folder"}
+            </button>
+          </div>
+        </form>
+      </section>
+    </div>
+  );
+}
+
 function InviteStudentForm({
   modules,
   busy,
+  preview,
   onClose,
   onInvite,
 }: {
   modules: Module[];
   busy: boolean;
+  preview: boolean;
   onClose: () => void;
   onInvite: (input: {
     email: string;
     fullName: string;
     studentId: string;
     moduleIds: string[];
-  }) => void;
+  }) => Promise<void>;
 }) {
   const [moduleIds, setModuleIds] = useState<string[]>([]);
   const [error, setError] = useState("");
 
-  function submit(event: FormEvent<HTMLFormElement>) {
+  async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    setError("");
     const form = new FormData(event.currentTarget);
     const fullName = String(form.get("fullName") ?? "").trim();
     const email = String(form.get("email") ?? "").trim();
@@ -1729,11 +2409,11 @@ function InviteStudentForm({
       setError("Enter the student’s name, email, and student ID.");
       return;
     }
-    if (moduleIds.length > 6) {
-      setError("A student can be assigned up to six modules.");
-      return;
+    try {
+      await onInvite({ fullName, email, studentId, moduleIds });
+    } catch (caught) {
+      setError(messageFrom(caught));
     }
-    onInvite({ fullName, email, studentId, moduleIds });
   }
 
   return (
@@ -1747,9 +2427,17 @@ function InviteStudentForm({
         <header className="viewer-header">
           <div>
             <p className="eyebrow">NEW ACCOUNT</p>
-            <h2 id="invite-student-heading">Invite a student</h2>
+            <h2 id="invite-student-heading">
+              {preview ? "Add a sample student" : "Invite a student"}
+            </h2>
           </div>
-          <button className="icon-button" type="button" onClick={onClose} aria-label="Close">
+          <button
+            className="icon-button"
+            type="button"
+            onClick={onClose}
+            aria-label="Close"
+            disabled={busy}
+          >
             <X aria-hidden="true" />
           </button>
         </header>
@@ -1798,7 +2486,9 @@ function InviteStudentForm({
             </p>
           )}
           <p className="form-hint">
-            The student will receive an email invitation to set their password.
+            {preview
+              ? "This only adds a sample account to the preview. No email will be sent."
+              : "The student will receive an email invitation to set their password."}
           </p>
           <div className="form-actions">
             <button className="outline-button" type="button" onClick={onClose} disabled={busy}>
@@ -1810,7 +2500,13 @@ function InviteStudentForm({
               ) : (
                 <Mail aria-hidden="true" />
               )}
-              {busy ? "Sending…" : "Send invitation"}
+              {busy
+                ? preview
+                  ? "Adding…"
+                  : "Sending…"
+                : preview
+                  ? "Add sample student"
+                  : "Send invitation"}
             </button>
           </div>
         </form>
@@ -1834,13 +2530,14 @@ function ContentAdminList({
   includeDeleted: boolean;
   busy: boolean;
   onEdit: (item: AdminItem) => void;
-  onAction: (item: AdminItem, action: "hide" | "publish" | "delete" | "restore") => void;
+  onAction: (
+    item: AdminItem,
+    action: "hide" | "publish" | "delete" | "restore" | "permanentlyDelete",
+  ) => void;
 }) {
   const visibleItems = items.filter((item) => {
     const isDeleted = Boolean(item.deleted_at);
-    const matchesDeleted = includeDeleted
-      ? isDeleted && isRecentlyDeleted(item.deleted_at ?? "")
-      : !isDeleted;
+    const matchesDeleted = includeDeleted ? isDeleted : !isDeleted;
     return (
       matchesDeleted &&
       `${item.title} ${item.description}`.toLowerCase().includes(search.toLowerCase())
@@ -1862,18 +2559,35 @@ function ContentAdminList({
           <span
             className={`status-pill ${item.deleted_at ? "not_started" : item.is_hidden ? "in_progress" : "completed"}`}
           >
-            {item.deleted_at ? "Recently deleted" : item.is_hidden ? "Hidden" : "Published"}
+            {item.deleted_at
+              ? isRecentlyDeleted(item.deleted_at)
+                ? "Recently deleted"
+                : "Recovery period ended"
+              : item.is_hidden
+                ? "Hidden"
+                : "Published"}
           </span>
           <div className="admin-row-actions">
             {item.deleted_at ? (
-              <button
-                className="outline-button"
-                type="button"
-                disabled={busy || !isRecentlyDeleted(item.deleted_at)}
-                onClick={() => onAction(item, "restore")}
-              >
-                Restore <ArrowRight aria-hidden="true" />
-              </button>
+              isRecentlyDeleted(item.deleted_at) ? (
+                <button
+                  className="outline-button"
+                  type="button"
+                  disabled={busy}
+                  onClick={() => onAction(item, "restore")}
+                >
+                  Restore <ArrowRight aria-hidden="true" />
+                </button>
+              ) : (
+                <button
+                  className="danger-outline-button"
+                  type="button"
+                  disabled={busy}
+                  onClick={() => onAction(item, "permanentlyDelete")}
+                >
+                  <Trash2 aria-hidden="true" /> Delete permanently
+                </button>
+              )
             ) : (
               <>
                 <button
@@ -1908,10 +2622,10 @@ function ContentAdminList({
       ))}
       {!visibleItems.length && (
         <div className="admin-empty small">
-          <h2>{includeDeleted ? "Nothing to restore" : "No content found"}</h2>
+          <h2>{includeDeleted ? "Recently deleted is empty" : "No content found"}</h2>
           <p>
             {includeDeleted
-              ? "Items deleted in the last 30 days will appear here."
+              ? "Deleted items will appear here. Restore is available for 30 days."
               : "Add a textbook, video, or podcast to get started."}
           </p>
         </div>
@@ -1923,16 +2637,22 @@ function ContentAdminList({
 function ContentForm({
   modules,
   item,
+  initialModuleId,
+  preview,
   onClose,
   onSaved,
 }: {
   modules: Module[];
   item: AdminItem | null;
+  initialModuleId: string;
+  preview: boolean;
   onClose: () => void;
-  onSaved: (message: string) => void;
+  onSaved: (message: string, savedContent: ContentDraft) => void;
 }) {
   const [file, setFile] = useState<File | null>(null);
-  const [moduleId, setModuleId] = useState(item?.module_id ?? modules[0]?.id ?? "");
+  const [moduleId, setModuleId] = useState(
+    item?.module_id ?? (initialModuleId || modules[0]?.id || ""),
+  );
   const [type, setType] = useState<ContentKind>(item?.type ?? "pdf");
   const [title, setTitle] = useState(item?.title ?? "");
   const [description, setDescription] = useState(item?.description ?? "");
@@ -2000,25 +2720,29 @@ function ContentForm({
       if (!moduleId || !title.trim()) throw new Error("Choose a module and add a title.");
       if (file) {
         uploadedPath = `${moduleId}/${crypto.randomUUID()}-${file.name.replace(/[\\/]/g, "_")}`;
-        await uploadFile(file, uploadedPath);
+        if (!preview) await uploadFile(file, uploadedPath);
       }
-      await savePortalContent({
-        data: {
-          ...(item ? { id: item.id } : {}),
-          moduleId,
-          type,
-          title: title.trim(),
-          description: description.trim(),
-          storagePath: uploadedPath || item?.storage_path || "",
-          publish,
-        },
-      });
+      const savedContent: ContentDraft = {
+        ...(item ? { id: item.id } : {}),
+        moduleId,
+        type,
+        title: title.trim(),
+        description: description.trim(),
+        storagePath: uploadedPath || item?.storage_path || "",
+        publish,
+      };
+      if (!preview) await savePortalContent({ data: savedContent });
       onSaved(
-        item
-          ? "Content changes saved."
-          : publish
-            ? "Content uploaded and published."
-            : "Content uploaded and saved as hidden.",
+        preview
+          ? item
+            ? "Sample content changes saved. Preview changes are temporary."
+            : "Sample item added. No file was uploaded; preview changes are temporary."
+          : item
+            ? "Content changes saved."
+            : publish
+              ? "Content uploaded and published."
+              : "Content uploaded and saved as hidden.",
+        savedContent,
       );
     } catch (caught) {
       if (uploadedPath) {
@@ -2055,7 +2779,13 @@ function ContentForm({
               {item ? "Update course content" : "Upload course content"}
             </h2>
           </div>
-          <button className="icon-button" type="button" onClick={onClose} aria-label="Close">
+          <button
+            className="icon-button"
+            type="button"
+            onClick={onClose}
+            aria-label="Close"
+            disabled={busy}
+          >
             <X aria-hidden="true" />
           </button>
         </header>
@@ -2072,8 +2802,9 @@ function ContentForm({
                 required
               />
               <p className="form-hint">
-                PDF, MP4, MOV, M4V, WebM, MP3, M4A, or WAV. Files upload privately and can be up to
-                2 GB.
+                {preview
+                  ? "Choose a sample file to try the form. It will not be uploaded or stored."
+                  : "PDF, MP4, MOV, M4V, WebM, MP3, M4A, or WAV. Files upload privately and can be up to 2 GB."}
               </p>
             </>
           )}
@@ -2131,7 +2862,7 @@ function ContentForm({
             />{" "}
             Publish now — students can see this item
           </label>
-          {busy && file && (
+          {busy && file && !preview && (
             <div className="upload-status">
               <span>Uploading securely… {uploadProgress}%</span>
               <div className="progress-track">
@@ -2156,11 +2887,13 @@ function ContentForm({
               )}
               {busy
                 ? "Saving…"
-                : item
-                  ? "Save changes"
-                  : publish
-                    ? "Upload & publish"
-                    : "Upload item"}
+                : preview && !item
+                  ? "Save sample item"
+                  : item
+                    ? "Save changes"
+                    : publish
+                      ? "Upload & publish"
+                      : "Upload item"}
             </button>
           </div>
         </form>

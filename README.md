@@ -61,7 +61,7 @@ Design for someone who is not technical. Rules:
 - Upload: a drag-and-drop zone plus a big "Add Content" button. Admin picks the module, then drops a file. The app auto-detects the type (PDF = textbook, MP4/MOV = video, MP3/M4A/WAV = podcast). The title auto-fills from the file name and is editable. Optional description. One click on "Publish".
 - Bulk upload (drop 10 files at once) with a progress bar per file and automatic retry on failure. Chunked, resumable uploads for large videos.
 - Edit: click any item to rename it, change its description, move it to another module, replace the file, reorder by drag-and-drop, or hide/unhide it.
-- Delete: a big red button with a friendly confirmation (for example "Remove 'Module 2 Intro Video'? Students will no longer see it."). Soft-delete with a 30-day "Recently deleted" bin so mistakes can be undone in one click.
+- Delete: a big red button with a friendly confirmation (for example "Remove 'Module 2 Intro Video'? Students will no longer see it."). Soft-delete with a 30-day "Recently deleted" bin so mistakes can be undone in one click; after the recovery window, an administrator can permanently remove the item and its private file.
 - "View as student" preview button.
 - Manage students: add one by email, bulk-add via CSV, deactivate/reactivate, reset password, assign modules.
 - Simple stats page: active students this week, most-viewed items, last login per student.
