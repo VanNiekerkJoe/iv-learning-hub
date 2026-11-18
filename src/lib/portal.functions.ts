@@ -14,6 +14,151 @@ type PortalContext = {
   supabase: PortalDb;
 };
 
+type RegistrationDocumentInput = {
+  name: string;
+  type: string;
+  size: number;
+};
+
+export type StudentRegistrationInput = {
+  fullNames: string;
+  surname: string;
+  cellPhone: string;
+  southAfricanIdNumber: string;
+  passportNumber: string;
+  passportCountry: string;
+  gender: string;
+  ethnicity: string;
+  homeLanguage: string;
+  fullHomeAddress: string;
+  province: string;
+  postalCode: string;
+  email: string;
+  passedGrade12: boolean;
+  qualificationName: string;
+  employedAtRealEstateCompany: boolean;
+  realEstateCompany: string;
+  paymentPlan: "once_off" | "monthly";
+  declarationAccepted: boolean;
+  signatureName: string;
+  signatureDate: string;
+  documents: {
+    identity: RegistrationDocumentInput;
+    education: RegistrationDocumentInput;
+    payment: RegistrationDocumentInput;
+  };
+  website: string;
+};
+
+const REGISTRATION_BUCKET = "student-registration-documents";
+const MAX_REGISTRATION_FILE_SIZE = 10 * 1024 * 1024;
+
+function cleanRegistrationText(value: unknown, field: string, maxLength = 500) {
+  if (typeof value !== "string") throw new Error(`${field} is required.`);
+  const clean = value.trim();
+  if (!clean || clean.length > maxLength) {
+    throw new Error(`${field} must be between 1 and ${maxLength} characters.`);
+  }
+  return clean;
+}
+
+function validateRegistrationDocument(document: RegistrationDocumentInput, field: string) {
+  const name = cleanRegistrationText(document?.name, `${field} file name`, 180);
+  if (!["application/pdf", "image/jpeg", "image/png"].includes(document?.type)) {
+    throw new Error(`${field} must be a PDF, JPG, or PNG file.`);
+  }
+  if (
+    !Number.isFinite(document?.size) ||
+    document.size <= 0 ||
+    document.size > MAX_REGISTRATION_FILE_SIZE
+  ) {
+    throw new Error(`${field} must be smaller than 10 MB.`);
+  }
+  const extension = name.split(".").at(-1)?.toLowerCase();
+  const expectedExtensions: Record<string, string[]> = {
+    "application/pdf": ["pdf"],
+    "image/jpeg": ["jpg", "jpeg"],
+    "image/png": ["png"],
+  };
+  if (!extension || !(expectedExtensions[document.type] ?? []).includes(extension)) {
+    throw new Error(`${field} file type does not match its file name.`);
+  }
+  return { name, type: document.type, size: document.size };
+}
+
+function validateStudentRegistration(input: StudentRegistrationInput) {
+  if (input.website) return null;
+  const southAfricanIdNumber = String(input.southAfricanIdNumber ?? "").trim();
+  const passportNumber = String(input.passportNumber ?? "").trim();
+  if (!southAfricanIdNumber && !passportNumber) {
+    throw new Error("Enter a South African ID number or passport number.");
+  }
+  if (southAfricanIdNumber && !/^\d{13}$/.test(southAfricanIdNumber)) {
+    throw new Error("The South African ID number must contain 13 digits.");
+  }
+  if (passportNumber && !input.passportCountry?.trim()) {
+    throw new Error("Enter the country that issued the passport.");
+  }
+  if (!input.passedGrade12) {
+    throw new Error("Confirm that you passed Grade 12 before registering.");
+  }
+  if (
+    !["once_off", "monthly"].includes(input.paymentPlan) ||
+    typeof input.declarationAccepted !== "boolean" ||
+    !input.declarationAccepted
+  ) {
+    throw new Error("Choose a payment plan and accept the registration declaration.");
+  }
+  if (
+    typeof input.employedAtRealEstateCompany !== "boolean" ||
+    (input.employedAtRealEstateCompany && !input.realEstateCompany?.trim())
+  ) {
+    throw new Error("Enter the real estate company where you are employed.");
+  }
+  const email = cleanRegistrationText(input.email, "Email address", 180).toLowerCase();
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new Error("Enter a valid email address.");
+  const signatureDate = cleanRegistrationText(input.signatureDate, "Signature date", 20);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(signatureDate)) throw new Error("Choose a valid signature date.");
+  return {
+    fullNames: cleanRegistrationText(input.fullNames, "Full names", 180),
+    surname: cleanRegistrationText(input.surname, "Surname", 120),
+    cellPhone: cleanRegistrationText(input.cellPhone, "Cell phone number", 40),
+    southAfricanIdNumber: southAfricanIdNumber || "",
+    passportNumber: passportNumber || "",
+    passportCountry: String(input.passportCountry ?? "").trim(),
+    gender: cleanRegistrationText(input.gender, "Gender", 50),
+    ethnicity: cleanRegistrationText(input.ethnicity, "Ethnicity", 50),
+    homeLanguage: cleanRegistrationText(input.homeLanguage, "Home language", 100),
+    fullHomeAddress: cleanRegistrationText(input.fullHomeAddress, "Full home address", 600),
+    province: cleanRegistrationText(input.province, "Province", 100),
+    postalCode: cleanRegistrationText(input.postalCode, "Postal code", 20),
+    email,
+    passedGrade12: input.passedGrade12,
+    qualificationName: cleanRegistrationText(input.qualificationName, "Qualification name", 240),
+    employedAtRealEstateCompany: input.employedAtRealEstateCompany,
+    realEstateCompany: String(input.realEstateCompany ?? "").trim(),
+    paymentPlan: input.paymentPlan,
+    declarationAccepted: true,
+    signatureName: cleanRegistrationText(input.signatureName, "Signature", 240),
+    signatureDate,
+    documents: {
+      identity: validateRegistrationDocument(input.documents?.identity, "ID or passport"),
+      education: validateRegistrationDocument(input.documents?.education, "Matric document"),
+      payment: validateRegistrationDocument(input.documents?.payment, "Proof of payment"),
+    },
+  };
+}
+
+async function hashRegistrationToken(token: string) {
+  const bytes = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(token));
+  return Array.from(new Uint8Array(bytes), (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+async function registrationPath(registrationId: string, kind: string, fileName: string) {
+  const extension = fileName.split(".").at(-1)?.toLowerCase() ?? "pdf";
+  return `${registrationId}/${kind}.${extension}`;
+}
+
 async function requireActiveProfile(context: PortalContext) {
   const { data: profile, error } = await context.supabase
     .from("profiles")
@@ -38,6 +183,306 @@ async function requireAdministrator(userId: string, supabase: PortalDb) {
   }
 }
 
+export const beginStudentRegistration = createServerFn({ method: "POST" })
+  .validator((input: StudentRegistrationInput) => validateStudentRegistration(input))
+  .handler(async ({ data }) => {
+    if (!data) return { ignored: true as const };
+    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+    const registrationId = crypto.randomUUID();
+    const submissionToken = crypto.randomUUID() + crypto.randomUUID();
+    const tokenHash = await hashRegistrationToken(submissionToken);
+    const paths = {
+      identity: await registrationPath(
+        registrationId,
+        "identity-document",
+        data.documents.identity.name,
+      ),
+      education: await registrationPath(
+        registrationId,
+        "education-document",
+        data.documents.education.name,
+      ),
+      payment: await registrationPath(
+        registrationId,
+        "proof-of-payment",
+        data.documents.payment.name,
+      ),
+    };
+
+    const { error: insertError } = await supabaseAdmin.from("student_registrations").insert({
+      id: registrationId,
+      submission_token_hash: tokenHash,
+      full_names: data.fullNames,
+      surname: data.surname,
+      cell_phone: data.cellPhone,
+      south_african_id_number: data.southAfricanIdNumber || null,
+      passport_number: data.passportNumber || null,
+      passport_country: data.passportCountry || null,
+      gender: data.gender,
+      ethnicity: data.ethnicity,
+      home_language: data.homeLanguage,
+      full_home_address: data.fullHomeAddress,
+      province: data.province,
+      postal_code: data.postalCode,
+      email: data.email,
+      passed_grade_12: data.passedGrade12,
+      qualification_name: data.qualificationName,
+      employed_at_real_estate_company: data.employedAtRealEstateCompany,
+      real_estate_company: data.employedAtRealEstateCompany ? data.realEstateCompany : "",
+      payment_plan: data.paymentPlan,
+      id_document_path: paths.identity,
+      id_document_name: data.documents.identity.name,
+      education_document_path: paths.education,
+      education_document_name: data.documents.education.name,
+      payment_proof_path: paths.payment,
+      payment_proof_name: data.documents.payment.name,
+      declaration_accepted: data.declarationAccepted,
+      signature_name: data.signatureName,
+      signature_date: data.signatureDate,
+    });
+    if (insertError) throw new Error("Your registration could not be started. Please try again.");
+
+    const uploadEntries = await Promise.all(
+      (Object.entries(paths) as [keyof typeof paths, string][]).map(async ([key, path]) => {
+        const { data: upload, error } = await supabaseAdmin.storage
+          .from(REGISTRATION_BUCKET)
+          .createSignedUploadUrl(path);
+        if (error || !upload) {
+          await supabaseAdmin.from("student_registrations").delete().eq("id", registrationId);
+          throw new Error("Secure document uploads could not be prepared. Please try again.");
+        }
+        return [key, { path, token: upload.token, signedUrl: upload.signedUrl }] as const;
+      }),
+    );
+
+    return {
+      ignored: false as const,
+      registrationId,
+      submissionToken,
+      uploads: Object.fromEntries(uploadEntries) as Record<
+        keyof typeof paths,
+        { path: string; token: string; signedUrl: string }
+      >,
+    };
+  });
+
+export const completeStudentRegistration = createServerFn({ method: "POST" })
+  .validator((input: { registrationId: string; submissionToken: string }) => {
+    if (
+      typeof input.registrationId !== "string" ||
+      !input.registrationId ||
+      typeof input.submissionToken !== "string" ||
+      !input.submissionToken
+    ) {
+      throw new Error("The registration upload could not be completed.");
+    }
+    return input;
+  })
+  .handler(async ({ data }) => {
+    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+    const { data: registration, error } = await supabaseAdmin
+      .from("student_registrations")
+      .select(
+        "id, status, submission_token_hash, id_document_path, education_document_path, payment_proof_path",
+      )
+      .eq("id", data.registrationId)
+      .maybeSingle();
+    if (error || !registration || registration.status !== "draft") {
+      throw new Error("This registration cannot be submitted. Start the form again.");
+    }
+    if (
+      (await hashRegistrationToken(data.submissionToken)) !== registration.submission_token_hash
+    ) {
+      throw new Error("Secure registration confirmation failed. Start the form again.");
+    }
+
+    const { data: uploaded, error: listError } = await supabaseAdmin.storage
+      .from(REGISTRATION_BUCKET)
+      .list(data.registrationId, { limit: 10 });
+    if (listError) throw new Error("Your uploaded documents could not be verified.");
+    const uploadedNames = new Set((uploaded ?? []).map((file) => file.name));
+    const expectedPaths = [
+      registration.id_document_path,
+      registration.education_document_path,
+      registration.payment_proof_path,
+    ];
+    if (expectedPaths.some((path) => !uploadedNames.has(path.split("/").at(-1) ?? ""))) {
+      throw new Error("One or more documents did not upload. Please upload all documents again.");
+    }
+
+    const { error: updateError } = await supabaseAdmin
+      .from("student_registrations")
+      .update({ status: "pending", updated_at: new Date().toISOString() })
+      .eq("id", data.registrationId)
+      .eq("status", "draft");
+    if (updateError) throw new Error("Your registration could not be submitted.");
+    return { submitted: true };
+  });
+
+export const listStudentRegistrations = createServerFn({ method: "GET" })
+  .middleware([requireSupabaseAuth])
+  .handler(async ({ context }) => {
+    await requireAdministrator(context.userId, context.supabase as PortalDb);
+    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+    const { data: registrations, error } = await supabaseAdmin
+      .from("student_registrations")
+      .select("*")
+      .order("created_at", { ascending: false })
+      .limit(250);
+    if (error) throw new Error("Student registrations could not be loaded.");
+
+    return {
+      registrations: await Promise.all(
+        (registrations ?? []).map(async (registration) => {
+          const [identity, education, payment] = await Promise.all([
+            supabaseAdmin.storage
+              .from(REGISTRATION_BUCKET)
+              .createSignedUrl(registration.id_document_path, 600),
+            supabaseAdmin.storage
+              .from(REGISTRATION_BUCKET)
+              .createSignedUrl(registration.education_document_path, 600),
+            supabaseAdmin.storage
+              .from(REGISTRATION_BUCKET)
+              .createSignedUrl(registration.payment_proof_path, 600),
+          ] as const);
+          return {
+            ...registration,
+            submission_token_hash: undefined,
+            documentUrls: {
+              identity: identity.data?.signedUrl ?? "",
+              education: education.data?.signedUrl ?? "",
+              payment: payment.data?.signedUrl ?? "",
+            },
+          };
+        }),
+      ),
+    };
+  });
+
+export const reviewStudentRegistration = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .validator((input: { registrationId: string; action: "approve" | "reject"; notes: string }) => {
+    if (
+      typeof input.registrationId !== "string" ||
+      !input.registrationId ||
+      !["approve", "reject"].includes(input.action) ||
+      typeof input.notes !== "string" ||
+      input.notes.length > 2000
+    ) {
+      throw new Error("Choose a valid registration decision.");
+    }
+    return { ...input, notes: input.notes.trim() };
+  })
+  .handler(async ({ data, context }) => {
+    await requireAdministrator(context.userId, context.supabase as PortalDb);
+    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+    const { data: registration, error: registrationError } = await supabaseAdmin
+      .from("student_registrations")
+      .select("*")
+      .eq("id", data.registrationId)
+      .maybeSingle();
+    if (registrationError || !registration || registration.status !== "pending") {
+      throw new Error("This registration is no longer waiting for a decision.");
+    }
+
+    const reviewedAt = new Date().toISOString();
+    if (data.action === "reject") {
+      const { error } = await supabaseAdmin
+        .from("student_registrations")
+        .update({
+          status: "rejected",
+          reviewed_by: context.userId,
+          reviewed_at: reviewedAt,
+          review_notes: data.notes,
+          updated_at: reviewedAt,
+        })
+        .eq("id", registration.id)
+        .eq("status", "pending");
+      if (error) throw new Error("The registration could not be rejected.");
+      return { status: "rejected" as const };
+    }
+
+    const password = `IV!${crypto.randomUUID().replaceAll("-", "").slice(0, 16)}`;
+    const { data: authUser, error: createUserError } = await supabaseAdmin.auth.admin.createUser({
+      email: registration.email,
+      password,
+      email_confirm: true,
+      user_metadata: {
+        full_name: `${registration.full_names} ${registration.surname}`.trim(),
+      },
+    });
+    if (createUserError || !authUser.user) {
+      throw new Error(
+        "The student account could not be created. Check whether this email already has an account.",
+      );
+    }
+
+    const studentUuid = authUser.user.id;
+    const studentId = `IV-${crypto.randomUUID().replaceAll("-", "").slice(0, 8).toUpperCase()}`;
+    try {
+      const { error: profileError } = await supabaseAdmin.from("profiles").insert({
+        id: studentUuid,
+        full_name: `${registration.full_names} ${registration.surname}`.trim(),
+        student_id: studentId,
+        role: "student",
+        active: true,
+      });
+      if (profileError) throw new Error("The student profile could not be created.");
+
+      const { error: roleError } = await supabaseAdmin.from("user_roles").insert({
+        user_id: studentUuid,
+        role: "student",
+      });
+      if (roleError) throw new Error("Student access could not be prepared.");
+
+      const { data: modules, error: moduleError } = await supabaseAdmin
+        .from("modules")
+        .select("id")
+        .in(
+          "title",
+          STARTER_MODULES.map((module) => module.title),
+        );
+      if (moduleError) throw new Error("Course assignments could not be loaded.");
+      if (modules?.length) {
+        const { error: assignmentError } = await supabaseAdmin
+          .from("student_modules")
+          .insert(modules.map((module) => ({ student_id: studentUuid, module_id: module.id })));
+        if (assignmentError) throw new Error("Course assignments could not be saved.");
+      }
+
+      const { error: approvalError } = await supabaseAdmin
+        .from("student_registrations")
+        .update({
+          status: "approved",
+          reviewed_by: context.userId,
+          reviewed_at: reviewedAt,
+          review_notes: data.notes,
+          student_profile_id: studentUuid,
+          updated_at: reviewedAt,
+        })
+        .eq("id", registration.id)
+        .eq("status", "pending");
+      if (approvalError) throw new Error("The approved registration could not be saved.");
+    } catch (error) {
+      await supabaseAdmin.from("student_modules").delete().eq("student_id", studentUuid);
+      await supabaseAdmin.from("user_roles").delete().eq("user_id", studentUuid);
+      await supabaseAdmin.from("profiles").delete().eq("id", studentUuid);
+      await supabaseAdmin.auth.admin.deleteUser(studentUuid);
+      throw error;
+    }
+
+    return {
+      status: "approved" as const,
+      login: {
+        name: `${registration.full_names} ${registration.surname}`.trim(),
+        email: registration.email,
+        studentId,
+        temporaryPassword: password,
+        loginPath: "/",
+      },
+    };
+  });
+
 export const getPortalProfile = createServerFn({ method: "GET" })
   .middleware([requireSupabaseAuth])
   .handler(async ({ context }) => requireActiveProfile(context as PortalContext));
@@ -53,7 +498,8 @@ export const getLearningDashboard = createServerFn({ method: "GET" })
     if (assignmentError) throw new Error("Your course assignments could not be loaded.");
 
     const moduleIds = (assigned ?? []).map((row) => row.module_id);
-    if (moduleIds.length === 0) return { profile, modules: [], folders: [], content: [], progress: [] };
+    if (moduleIds.length === 0)
+      return { profile, modules: [], folders: [], content: [], progress: [] };
 
     const [moduleResult, contentResult, folderResult, progressResult] = await Promise.all([
       context.supabase
@@ -548,7 +994,9 @@ export const savePortalFolder = createServerFn({ method: "POST" })
       const title = input.title.trim();
       const description = input.description.trim();
       if (!input.moduleId || !title || title.length > 100 || description.length > 500) {
-        throw new Error("Add a folder name up to 100 characters and a description up to 500 characters.");
+        throw new Error(
+          "Add a folder name up to 100 characters and a description up to 500 characters.",
+        );
       }
       return { ...input, title, description, parentFolderId: input.parentFolderId ?? null };
     },
@@ -631,7 +1079,8 @@ export const deletePortalFolder = createServerFn({ method: "POST" })
         context.supabase.from("content_folders").select("id").eq("parent_folder_id", data.id),
         context.supabase.from("content_items").select("id").eq("folder_id", data.id).limit(1),
       ]);
-    if (childError || itemError) throw new Error("This folder could not be checked before deleting.");
+    if (childError || itemError)
+      throw new Error("This folder could not be checked before deleting.");
     if (children?.length || items?.length) {
       throw new Error("This folder must be empty before it can be deleted.");
     }
@@ -766,8 +1215,8 @@ export const savePortalContent = createServerFn({ method: "POST" })
         typeof input.description !== "string" ||
         typeof input.storagePath !== "string" ||
         typeof input.publish !== "boolean" ||
-        (input.id !== undefined && typeof input.id !== "string")
-        || (input.folderId !== undefined &&
+        (input.id !== undefined && typeof input.id !== "string") ||
+        (input.folderId !== undefined &&
           input.folderId !== null &&
           typeof input.folderId !== "string")
       ) {
