@@ -1,5 +1,7 @@
 # IV Learning Hub
 
+The application uses TanStack Start, React, TypeScript, and Supabase. Nitro generates the Vercel deployment output.
+
 Build a secure learning web app for students of Inyapa Vhusiku Consulting (IV Consulting), a South African accredited training provider. Students log in and access 6 modules. Each module contains textbooks (PDF), videos, and podcasts (audio). An admin manages all content. The two non-negotiables are: (1) the admin is not technical, so every content action must be extremely easy and quick, and (2) content must be protected as far as is realistically possible from being downloaded, copied, or resold. Everything must be consumed inside the web app.
 
 ## 1. Brand and design
@@ -31,14 +33,11 @@ App-specific styling:
 - Admin panel: white background, charcoal sidebar, blue primary buttons ("Add Content", "Publish"), red for destructive actions.
 - Light and dark mode.
 
-## 2. Tech stack (use unless there is a strong reason to change)
-- Next.js (App Router) + TypeScript + Tailwind CSS
-- Supabase (Auth, Postgres, Row Level Security, Storage with PRIVATE buckets)
-- Video: Mux or Cloudflare Stream with signed playback tokens and HLS streaming
-- Audio: HLS or short-lived signed URLs from private storage
-- PDFs: rendered page-by-page in the browser (PDF.js on canvas), never exposed as a downloadable file URL
-- Deploy on Vercel
-- If budget is a concern, suggest a lower-cost alternative for video hosting (for example self-hosted HLS with signed URLs).
+## 2. Tech stack (current implementation)
+- TanStack Start, React, TypeScript, and Tailwind CSS
+- Supabase Auth, Postgres with Row Level Security, and private Storage
+- Supabase signed URLs for protected PDF, video, and audio access
+- Vite/Nitro build targeting Vercel
 
 ## 3. Roles
 - Student: view assigned modules and consume content only.
@@ -106,7 +105,25 @@ Enforce all access with Row Level Security. Students can only read content in mo
 
 Priorities, in order: (1) the admin upload/edit/delete flow is effortless, (2) content cannot be downloaded directly, (3) the student viewing experience is smooth on mobile, (4) brand fidelity to ivconsulting.co.za.
 
-This project was built with [Lovable](https://lovable.dev).
+## Deployment
+
+The app is a TanStack Start application built with Nitro's Vercel preset. Supabase provides authentication, Postgres, and private Storage.
+
+### Deploy to Vercel
+
+1. Import this Git repository into Vercel and set the repository root as the project root.
+2. Use `bun run build` as the build command. Keep the output directory setting empty so Nitro's Vercel preset can provide the deployment output.
+3. Add the required variables from [`.env.example`](./.env.example) in the Vercel project's environment settings:
+   - `VITE_SUPABASE_URL` and `VITE_SUPABASE_PUBLISHABLE_KEY` are build-time values exposed to the browser. Only use the Supabase publishable key here.
+   - `SUPABASE_URL` and `SUPABASE_PUBLISHABLE_KEY` are server runtime values.
+   - `SUPABASE_SERVICE_ROLE_KEY` is server-only and required for administrator invitations. Never prefix it with `VITE_`.
+   - `DATABASE_URL` is only for local or CI database tooling; do not add it to Vercel unless a deployment task explicitly requires it.
+4. Configure Supabase Auth's site URL and redirect allowlist with the deployed Vercel URL and exact password-reset URLs. Do not allow arbitrary origins.
+5. Before production, verify the intended Supabase project's schema, Row Level Security policies, and private `iv-learning-content` Storage bucket are in place.
+6. **Do not deploy with the current first-admin bootstrap unchanged.** `drizzle/migrations/0001_bootstrap_first_admin.sql` grants administrator status to a hard-coded email when no administrator exists. Replace that process with explicit, secure admin provisioning before production.
+7. Run the checks below, then smoke-test admin and student sign-in, module assignment, protected uploads, and content viewing on the deployed URL.
+
+Keep secrets in Vercel's environment settings or a local ignored `.env` file. Never commit secrets or paste them into chat.
 
 ## Build with Lovable
 

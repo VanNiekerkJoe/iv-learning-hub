@@ -1712,7 +1712,7 @@ function AdminWorkspace({ profile, preview = false }: { profile: Profile; previe
             <p className="eyebrow">IV CONSULTING · ADMIN</p>
             <h1>
               {tab === "overview"
-              ? "Overview"
+                ? "Overview"
                 : tab === "content"
                   ? (contentFolder?.title ?? "Course content")
                   : tab === "students"
