@@ -75,11 +75,18 @@ type AuthSession = NonNullable<
   Awaited<ReturnType<typeof supabase.auth.getSession>>["data"]["session"]
 >;
 
-const STARTER_MODULES = Array.from({ length: 6 }, (_, index) => ({
-  title: `Module ${index + 1}`,
-  description: "Course materials will be added by your administrator.",
-  position: index + 1,
-}));
+const STARTER_MODULES = [
+  {
+    title: "Induction",
+    description: "Start here to learn about the course and how to get started.",
+    position: 0,
+  },
+  ...Array.from({ length: 6 }, (_, index) => ({
+    title: `Module ${index + 1}`,
+    description: "Course materials will be added by your administrator.",
+    position: index + 1,
+  })),
+];
 
 const PREVIEW_PROFILE: Profile = {
   id: "local-preview-student",
@@ -100,11 +107,14 @@ const PREVIEW_ADMIN_PROFILE: Profile = {
 };
 
 const PREVIEW_MODULE_ID = "preview-module-1";
-const PREVIEW_MODULES: Module[] = Array.from({ length: 6 }, (_, index) => ({
-  id: `preview-module-${index + 1}`,
-  title: `Module ${index + 1}`,
-  description: "Sample course area shown in local preview mode.",
-  position: index + 1,
+const PREVIEW_MODULES: Module[] = Array.from({ length: 7 }, (_, index) => ({
+  id: index === 0 ? "preview-induction" : `preview-module-${index}`,
+  title: index === 0 ? "Induction" : `Module ${index}`,
+  description:
+    index === 0
+      ? "Start here to learn about the course and how to get started."
+      : "Sample course area shown in local preview mode.",
+  position: index,
 }));
 
 const PREVIEW_CONTENT: ContentItem[] = [
@@ -905,13 +915,15 @@ function StudentDashboard({
                 style={{ animationDelay: `${Math.min(index, 5) * 70}ms` }}
               >
                 <div className={`module-art art-${index % 6}`}>
-                  <span className="module-number">{String(index + 1).padStart(2, "0")}</span>
+                  <span className="module-number">{String(module.position).padStart(2, "0")}</span>
                   <BookOpen aria-hidden="true" />
                 </div>
                 <div className="module-card-body">
                   <div className="module-card-heading">
                     <span className="module-kicker">
-                      {moduleItems.length} learning {moduleItems.length === 1 ? "item" : "items"}
+                      {module.position === 0
+                        ? "START HERE · REQUIRED"
+                        : `${moduleItems.length} learning ${moduleItems.length === 1 ? "item" : "items"}`}
                     </span>
                     <span
                       className={`module-completion ${percentage === 100 ? "complete" : percentage ? "in-progress" : ""}`}
@@ -946,7 +958,8 @@ function StudentDashboard({
                     type="button"
                     onClick={() => onOpenModule(module)}
                   >
-                    Open module <ArrowRight aria-hidden="true" />
+                    {module.position === 0 ? "Start here" : "Open module"}{" "}
+                    <ArrowRight aria-hidden="true" />
                   </button>
                 </div>
               </article>
@@ -1024,7 +1037,9 @@ function ModuleWorkspace({
       </button>
       <div className="module-page-heading">
         <div>
-          <p className="eyebrow">YOUR COURSE</p>
+          <p className="eyebrow">
+            {module.position === 0 ? "START HERE · REQUIRED · MODULE 0" : "YOUR COURSE"}
+          </p>
           <h1>{module.title}</h1>
           <p>{module.description}</p>
         </div>
@@ -1352,7 +1367,7 @@ function AdminWorkspace({ profile, preview = false }: { profile: Profile; previe
       const { error: insertError } = await supabase.from("modules").insert(STARTER_MODULES);
       if (insertError) throw insertError;
       setNotice(
-        "Six starter modules are ready. You can start adding course content to any module.",
+        "Induction and Modules 1–6 are ready. You can start adding course content to any module.",
       );
       await refresh();
     } catch (caught) {
@@ -1792,8 +1807,8 @@ function AdminWorkspace({ profile, preview = false }: { profile: Profile; previe
                 </span>
                 <h2>Set up your learning modules</h2>
                 <p>
-                  Create six starter modules first. You can add course materials and invite students
-                  when you’re ready.
+                  Create Induction and Modules 1–6 first. Add the course materials and invite
+                  students when you’re ready.
                 </p>
                 <button
                   className="brand-button"
@@ -1806,7 +1821,7 @@ function AdminWorkspace({ profile, preview = false }: { profile: Profile; previe
                   ) : (
                     <Plus aria-hidden="true" />
                   )}{" "}
-                  Create six starter modules
+                  Create Induction + Modules 1–6
                 </button>
               </section>
             )}
@@ -1840,7 +1855,7 @@ function AdminWorkspace({ profile, preview = false }: { profile: Profile; previe
               <div className="admin-table-card">
                 <div className="admin-empty small">
                   <h2>No learning modules yet</h2>
-                  <p>Create the starter module folders before adding course materials.</p>
+                  <p>Create Induction and Modules 1–6 before adding course materials.</p>
                   <button
                     className="outline-button"
                     type="button"

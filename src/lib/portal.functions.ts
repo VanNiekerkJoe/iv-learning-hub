@@ -479,7 +479,10 @@ export const savePortalModule = createServerFn({ method: "POST" })
       return { id: updated.id, saved: true };
     }
 
-    const position = Math.max(0, ...(modules ?? []).map((module) => module.position)) + 1;
+    const position =
+      data.title.toLowerCase() === "induction"
+        ? 0
+        : Math.max(0, ...(modules ?? []).map((module) => module.position)) + 1;
     const { data: inserted, error } = await context.supabase
       .from("modules")
       .insert({ title: data.title, description: data.description, position })
