@@ -7,7 +7,6 @@ Build a secure learning web app for students of Inyapa Vhusiku Consulting (IV Co
 
 
 
-
 ## 1. Brand and design
 Match the look and feel of https://ivconsulting.co.za/. Use this palette as CSS variables / Tailwind theme tokens:
 
