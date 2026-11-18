@@ -43,8 +43,10 @@ import {
   listAdminPortalData,
   permanentlyDeletePortalContent,
   saveLearningProgress,
+  savePortalFolder,
   savePortalModule,
   savePortalContent,
+  deletePortalFolder,
   setupStarterModules,
   updateStudentPortalAccess,
 } from "@/lib/portal.functions";
@@ -63,14 +65,17 @@ type Profile = Dashboard["profile"];
 type Module = Dashboard["modules"][number];
 type ContentItem = NonNullable<Dashboard["content"]>[number];
 type LearningProgress = Dashboard["progress"][number];
+type LearningFolder = Awaited<ReturnType<typeof getLearningModule>>["folders"][number];
 type AdminProfile = AdminData["profiles"][number];
 type AdminModule = AdminData["modules"][number];
+type AdminFolder = AdminData["folders"][number];
 type AdminItem = AdminData["items"][number];
 type ContentKind = Tables<"content_items">["type"];
 type ModuleDraft = { id?: string; title: string; description: string };
 type ContentDraft = {
   id?: string;
   moduleId: string;
+  folderId?: string | null;
   type: ContentKind;
   title: string;
   description: string;
@@ -96,6 +101,7 @@ const PREVIEW_CONTENT: ContentItem[] = [
   {
     id: "preview-textbook",
     module_id: PREVIEW_MODULE_ID,
+    folder_id: null,
     type: "pdf",
     storage_path: "preview/sample-textbook.pdf",
     title: "Sample textbook",
@@ -105,6 +111,7 @@ const PREVIEW_CONTENT: ContentItem[] = [
   {
     id: "preview-video",
     module_id: PREVIEW_MODULE_ID,
+    folder_id: null,
     type: "video",
     storage_path: "preview/sample-lesson.mp4",
     title: "Sample lesson video",
@@ -114,6 +121,7 @@ const PREVIEW_CONTENT: ContentItem[] = [
   {
     id: "preview-podcast",
     module_id: PREVIEW_MODULE_ID,
+    folder_id: null,
     type: "audio",
     storage_path: "preview/sample-podcast.mp3",
     title: "Sample podcast",
@@ -125,9 +133,11 @@ const PREVIEW_CONTENT: ContentItem[] = [
 const PREVIEW_ADMIN_DATA: AdminData = {
   profiles: [],
   modules: PREVIEW_MODULES,
+  folders: [],
   items: [
     ...PREVIEW_CONTENT.map((item) => ({
       ...item,
+      folder_id: null,
       storage_path: `preview/${item.id}`,
       is_hidden: false,
       deleted_at: null,
@@ -136,6 +146,7 @@ const PREVIEW_ADMIN_DATA: AdminData = {
     {
       id: "preview-expired-item",
       module_id: PREVIEW_MODULE_ID,
+      folder_id: null,
       type: "pdf",
       title: "Expired sample item",
       description: "Example of an item past its recovery window.",
@@ -224,6 +235,7 @@ export function LearningPortal() {
   const [loadingDashboard, setLoadingDashboard] = useState(false);
   const [selectedModule, setSelectedModule] = useState<Module | null>(null);
   const [moduleContent, setModuleContent] = useState<ContentItem[]>([]);
+  const [moduleFolders, setModuleFolders] = useState<LearningFolder[]>([]);
   const [moduleProgress, setModuleProgress] = useState<LearningProgress[]>([]);
   const [moduleError, setModuleError] = useState("");
   const [moduleSearch, setModuleSearch] = useState("");
@@ -309,12 +321,14 @@ export function LearningPortal() {
   async function openModule(module: Module) {
     setSelectedModule(module);
     setModuleContent([]);
+    setModuleFolders([]);
     setModuleSearch("");
     setModuleKind("all");
     setModuleError("");
     try {
       const result = await getLearningModule({ data: { moduleId: module.id } });
       setModuleContent(result.content);
+      setModuleFolders(result.folders);
       setModuleProgress(result.progress);
     } catch (error) {
       setModuleError(messageFrom(error));
@@ -430,6 +444,7 @@ export function LearningPortal() {
         <ModuleWorkspace
           module={selectedModule}
           content={moduleContent}
+          folders={moduleFolders}
           progress={moduleProgress}
           search={moduleSearch}
           setSearch={setModuleSearch}
@@ -791,9 +806,7 @@ function StudentDashboard({
         <div>
           <p className="eyebrow">YOUR COURSES</p>
           <h2>My learning modules</h2>
-          <p className="dashboard-subheading">
-            Open a course to find your learning materials.
-          </p>
+          <p className="dashboard-subheading">Open a course to find your learning materials.</p>
         </div>
         <label className="search-field">
           <Search aria-hidden="true" />
@@ -919,6 +932,7 @@ function StudentDashboard({
 function ModuleWorkspace({
   module,
   content,
+  folders,
   progress,
   search,
   setSearch,
@@ -931,6 +945,7 @@ function ModuleWorkspace({
 }: {
   module: Module;
   content: ContentItem[];
+  folders: LearningFolder[];
   progress: LearningProgress[];
   search: string;
   setSearch: (search: string) => void;
@@ -1019,7 +1034,12 @@ function ModuleWorkspace({
               <article className="content-row" key={item.id}>
                 <span className={`content-kind-icon ${item.type}`}>{kindIcon(item.type)}</span>
                 <div className="content-row-copy">
-                  <span className="module-kicker">{kindLabel(item.type, item.storage_path)}</span>
+                  <span className="module-kicker">
+                    {item.folder_id
+                      ? `${folders.find((folder) => folder.id === item.folder_id)?.title ?? "Folder"} · `
+                      : ""}
+                    {kindLabel(item.type, item.storage_path)}
+                  </span>
                   <h3>{item.title}</h3>
                   <p>{item.description || "Open this material to continue learning."}</p>
                 </div>
@@ -1242,6 +1262,7 @@ function AdminWorkspace({ profile, preview = false }: { profile: Profile; previe
   const [loading, setLoading] = useState(!preview);
   const [tab, setTab] = useState<"overview" | "content" | "students" | "activity">("overview");
   const [contentFolderId, setContentFolderId] = useState<string | null>(null);
+  const [contentSubfolderId, setContentSubfolderId] = useState<string | null>(null);
   const [showForm, setShowForm] = useState(false);
   const [editing, setEditing] = useState<AdminItem | null>(null);
   const [busy, setBusy] = useState(false);
@@ -1253,7 +1274,10 @@ function AdminWorkspace({ profile, preview = false }: { profile: Profile; previe
   const [dialogError, setDialogError] = useState("");
   const [moduleFormOpen, setModuleFormOpen] = useState(false);
   const [moduleEditing, setModuleEditing] = useState<AdminModule | null>(null);
+  const [folderFormOpen, setFolderFormOpen] = useState(false);
+  const [folderEditing, setFolderEditing] = useState<AdminFolder | null>(null);
   const contentFolder = data?.modules.find((module) => module.id === contentFolderId) ?? null;
+  const contentSubfolder = data?.folders.find((folder) => folder.id === contentSubfolderId) ?? null;
   const missingStarterModules = STARTER_MODULES.filter(
     (starter) => !data?.modules.some((module) => module.title === starter.title),
   );
@@ -1685,6 +1709,7 @@ function AdminWorkspace({ profile, preview = false }: { profile: Profile; previe
                 setNotice("");
                 if (id === "content") {
                   setContentFolderId(null);
+                  setContentSubfolderId(null);
                   setSearch("");
                 }
               }}
@@ -1892,22 +1917,35 @@ function AdminWorkspace({ profile, preview = false }: { profile: Profile; previe
                     className="folder-back"
                     type="button"
                     onClick={() => {
-                      setContentFolderId(null);
+                          if (contentSubfolder) {
+                            setContentSubfolderId(contentSubfolder.parent_folder_id);
+                          } else {
+                            setContentFolderId(null);
+                          }
                       setSearch("");
                     }}
                   >
                     <ArrowLeft aria-hidden="true" />
-                    All module folders
+                        {contentSubfolder?.parent_folder_id ? "Parent folder" : "All module folders"}
                   </button>
                   <span className="folder-path-divider">/</span>
                   <span className="folder-path-icon">
                     <FolderOpen aria-hidden="true" />
                   </span>
                   <strong>{contentFolder.title}</strong>
+                  {contentSubfolder && (
+                    <>
+                      <span className="folder-path-divider">/</span>
+                      <strong>{contentSubfolder.title}</strong>
+                    </>
+                  )}
                   <span className="folder-path-count">
                     {
                       (data?.items ?? []).filter(
-                        (item) => item.module_id === contentFolder.id && !item.deleted_at,
+                        (item) =>
+                          item.module_id === contentFolder.id &&
+                          item.folder_id === contentSubfolderId &&
+                          !item.deleted_at,
                       ).length
                     }{" "}
                     items
@@ -1931,11 +1969,74 @@ function AdminWorkspace({ profile, preview = false }: { profile: Profile; previe
                     />
                     Recently deleted
                   </label>
+                  <button
+                    className="outline-button"
+                    type="button"
+                    onClick={() => {
+                      setFolderEditing(null);
+                      setFolderFormOpen(true);
+                    }}
+                  >
+                    <Plus aria-hidden="true" /> Add subfolder
+                  </button>
+                </div>
+                <div className="course-folder-grid">
+                  {(data?.folders ?? [])
+                    .filter(
+                      (folder) =>
+                        folder.module_id === contentFolder.id &&
+                        folder.parent_folder_id === contentSubfolderId,
+                    )
+                    .map((folder) => (
+                      <article className="course-folder-card" key={folder.id}>
+                        <button
+                          className="course-folder-main"
+                          type="button"
+                          onClick={() => setContentSubfolderId(folder.id)}
+                        >
+                          <span className="course-folder-icon">
+                            <Folder aria-hidden="true" />
+                          </span>
+                          <span className="module-kicker">CONTENT FOLDER</span>
+                          <strong>{folder.title}</strong>
+                          <span className="course-folder-description">
+                            {folder.description || "Open this folder to manage its materials."}
+                          </span>
+                          <span className="course-folder-open">
+                            Open folder <ArrowRight aria-hidden="true" />
+                          </span>
+                        </button>
+                        <div className="course-folder-actions">
+                          <button
+                            className="outline-button"
+                            type="button"
+                            onClick={() => {
+                              setFolderEditing(folder);
+                              setFolderFormOpen(true);
+                            }}
+                          >
+                            Edit folder
+                          </button>
+                          <button
+                            className="danger-outline-button"
+                            type="button"
+                            onClick={() => {
+                              if (!window.confirm(`Delete the "${folder.title}" folder?`)) return;
+                              void deletePortalFolder({ data: { id: folder.id } }).then(refresh);
+                            }}
+                          >
+                            <Trash2 aria-hidden="true" /> Delete
+                          </button>
+                        </div>
+                      </article>
+                    ))}
                 </div>
                 <div className="admin-table-card">
                   <ContentAdminList
                     items={(data?.items ?? []).filter(
-                      (item) => item.module_id === contentFolder.id,
+                      (item) =>
+                        item.module_id === contentFolder.id &&
+                        item.folder_id === contentSubfolderId,
                     )}
                     modules={[contentFolder]}
                     search={search}
@@ -1987,6 +2088,7 @@ function AdminWorkspace({ profile, preview = false }: { profile: Profile; previe
                             onClick={() => {
                               setSearch("");
                               setContentFolderId(module.id);
+                              setContentSubfolderId(null);
                             }}
                             aria-label={`Open ${module.title} folder, ${items.length} items`}
                           >
@@ -2129,11 +2231,26 @@ function AdminWorkspace({ profile, preview = false }: { profile: Profile; previe
           onSave={saveModule}
         />
       )}
+      {folderFormOpen && contentFolder && (
+        <FolderForm
+          moduleId={contentFolder.id}
+          parentFolderId={contentSubfolderId}
+          folder={folderEditing}
+          onClose={() => setFolderFormOpen(false)}
+          onSaved={async (input) => {
+            await savePortalFolder({ data: input });
+            setFolderFormOpen(false);
+            setFolderEditing(null);
+            await refresh();
+          }}
+        />
+      )}
       {showForm && data && (
         <ContentForm
           modules={data.modules}
           item={editing}
           initialModuleId={contentFolder?.id ?? ""}
+          initialFolderId={contentSubfolderId}
           preview={preview}
           onClose={() => setShowForm(false)}
           onSaved={(message, savedContent) => {
@@ -2142,6 +2259,7 @@ function AdminWorkspace({ profile, preview = false }: { profile: Profile; previe
               const savedItem: AdminItem = {
                 id: savedContent.id ?? `preview-content-${crypto.randomUUID()}`,
                 module_id: savedContent.moduleId,
+                folder_id: savedContent.folderId ?? null,
                 type: savedContent.type,
                 title: savedContent.title,
                 description: savedContent.description,
@@ -2308,6 +2426,100 @@ function StatCard({ label, value, icon }: { label: string; value: string; icon: 
   );
 }
 
+function FolderForm({
+  moduleId,
+  parentFolderId,
+  folder,
+  onClose,
+  onSaved,
+}: {
+  moduleId: string;
+  parentFolderId: string | null;
+  folder: AdminFolder | null;
+  onClose: () => void;
+  onSaved: (input: {
+    id?: string;
+    moduleId: string;
+    parentFolderId: string | null;
+    title: string;
+    description: string;
+  }) => Promise<void>;
+}) {
+  const [title, setTitle] = useState(folder?.title ?? "");
+  const [description, setDescription] = useState(folder?.description ?? "");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setBusy(true);
+    setError("");
+    try {
+      await onSaved({
+        ...(folder ? { id: folder.id } : {}),
+        moduleId,
+        parentFolderId: folder?.parent_folder_id ?? parentFolderId,
+        title: title.trim(),
+        description: description.trim(),
+      });
+    } catch (caught) {
+      setError(messageFrom(caught));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="viewer-backdrop">
+      <section className="content-form-card" role="dialog" aria-modal="true">
+        <header className="viewer-header">
+          <div>
+            <p className="eyebrow">{folder ? "EDIT CONTENT FOLDER" : "ADD CONTENT FOLDER"}</p>
+            <h2>{folder ? "Update folder" : "Create subfolder"}</h2>
+          </div>
+          <button className="icon-button" type="button" onClick={onClose} disabled={busy}>
+            <X aria-hidden="true" />
+          </button>
+        </header>
+        <form className="admin-form" onSubmit={(event) => void submit(event)}>
+          <label htmlFor="folder-title">Folder name</label>
+          <input
+            id="folder-title"
+            className="portal-input"
+            value={title}
+            onChange={(event) => setTitle(event.target.value)}
+            maxLength={100}
+            required
+          />
+          <label htmlFor="folder-description">Description (optional)</label>
+          <textarea
+            id="folder-description"
+            className="portal-input form-textarea"
+            value={description}
+            onChange={(event) => setDescription(event.target.value)}
+            maxLength={500}
+            rows={3}
+          />
+          {error && (
+            <p className="inline-error" role="alert">
+              {error}
+            </p>
+          )}
+          <div className="form-actions">
+            <button className="outline-button" type="button" onClick={onClose} disabled={busy}>
+              Cancel
+            </button>
+            <button className="brand-button" type="submit" disabled={busy}>
+              {busy ? <LoaderCircle className="spin" aria-hidden="true" /> : <Check aria-hidden="true" />}
+              {busy ? "Saving…" : "Save folder"}
+            </button>
+          </div>
+        </form>
+      </section>
+    </div>
+  );
+}
+
 function ModuleForm({
   item,
   preview,
@@ -2388,9 +2600,7 @@ function ModuleForm({
             rows={3}
           />
           {preview && (
-            <p className="form-hint">
-              This is a sample folder. Changes are saved in this browser.
-            </p>
+            <p className="form-hint">This is a sample folder. Changes are saved in this browser.</p>
           )}
           {error && (
             <p className="inline-error" role="alert">
@@ -2673,6 +2883,7 @@ function ContentForm({
   modules,
   item,
   initialModuleId,
+  initialFolderId,
   preview,
   onClose,
   onSaved,
@@ -2680,6 +2891,7 @@ function ContentForm({
   modules: Module[];
   item: AdminItem | null;
   initialModuleId: string;
+  initialFolderId: string | null;
   preview: boolean;
   onClose: () => void;
   onSaved: (message: string, savedContent: ContentDraft) => void;
@@ -2757,12 +2969,13 @@ function ContentForm({
       if (!item && !file) throw new Error("Choose a course file before publishing.");
       if (!moduleId || !title.trim()) throw new Error("Choose a module and add a title.");
       if (file) {
-        uploadedPath = `${moduleId}/${crypto.randomUUID()}-${file.name.replace(/[\\/]/g, "_")}`;
+        uploadedPath = `${moduleId}/${item?.folder_id ?? initialFolderId ? `${item?.folder_id ?? initialFolderId}/` : ""}${crypto.randomUUID()}-${file.name.replace(/[\\/]/g, "_")}`;
         if (!preview) await uploadFile(file, uploadedPath);
       }
       const savedContent: ContentDraft = {
         ...(item ? { id: item.id } : {}),
         moduleId,
+        folderId: item?.folder_id ?? initialFolderId,
         type,
         title: title.trim(),
         description: description.trim(),

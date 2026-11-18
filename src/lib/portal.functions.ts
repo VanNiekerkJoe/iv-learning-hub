@@ -63,7 +63,7 @@ export const getLearningDashboard = createServerFn({ method: "GET" })
         .order("position"),
       context.supabase
         .from("content_items")
-        .select("id, module_id, type, title, description, position, storage_path")
+        .select("id, module_id, folder_id, type, title, description, position, storage_path")
         .in("module_id", moduleIds)
         .eq("is_hidden", false)
         .is("deleted_at", null)
@@ -99,7 +99,7 @@ export const getLearningModule = createServerFn({ method: "GET" })
     if (profile.role !== "admin" && (assignmentError || !moduleAccess)) {
       throw new Error("This course is not assigned to your account.");
     }
-    const [moduleResult, contentResult, progressResult] = await Promise.all([
+    const [moduleResult, contentResult, folderResult, progressResult] = await Promise.all([
       context.supabase
         .from("modules")
         .select("id, title, description, position")
@@ -107,22 +107,34 @@ export const getLearningModule = createServerFn({ method: "GET" })
         .maybeSingle(),
       context.supabase
         .from("content_items")
-        .select("id, module_id, type, title, description, position, storage_path")
+        .select("id, module_id, folder_id, type, title, description, position, storage_path")
         .eq("module_id", data.moduleId)
         .eq("is_hidden", false)
         .is("deleted_at", null)
+        .order("position"),
+      context.supabase
+        .from("content_folders")
+        .select("id, module_id, parent_folder_id, title, description, position, created_at")
+        .eq("module_id", data.moduleId)
         .order("position"),
       context.supabase
         .from("progress")
         .select("content_id, status, position_seconds, updated_at")
         .eq("student_id", context.userId),
     ]);
-    if (moduleResult.error || !moduleResult.data || contentResult.error || progressResult.error) {
+    if (
+      moduleResult.error ||
+      !moduleResult.data ||
+      contentResult.error ||
+      folderResult.error ||
+      progressResult.error
+    ) {
       throw new Error("This course could not be loaded.");
     }
     return {
       profile,
       module: moduleResult.data,
+      folders: folderResult.data ?? [],
       content: contentResult.data ?? [],
       progress: progressResult.data ?? [],
     };
@@ -228,6 +240,7 @@ export const listAdminPortalData = createServerFn({ method: "GET" })
       { data: profiles, error: profileError },
       { data: modules, error: moduleError },
       { data: items, error: itemError },
+      { data: folders, error: folderError },
       { data: logs, error: logError },
     ] = await Promise.all([
       context.supabase
@@ -239,17 +252,21 @@ export const listAdminPortalData = createServerFn({ method: "GET" })
       context.supabase
         .from("content_items")
         .select(
-          "id, module_id, type, title, description, storage_path, position, is_hidden, deleted_at, created_at",
+          "id, module_id, folder_id, type, title, description, storage_path, position, is_hidden, deleted_at, created_at",
         )
         .order("created_at", { ascending: false })
         .limit(400),
+      context.supabase
+        .from("content_folders")
+        .select("id, module_id, parent_folder_id, title, description, position, created_at")
+        .order("position"),
       context.supabase
         .from("access_logs")
         .select("id, student_id, content_id, event, ip, created_at")
         .order("created_at", { ascending: false })
         .limit(400),
     ]);
-    if (profileError || moduleError || itemError || logError)
+    if (profileError || moduleError || itemError || folderError || logError)
       throw new Error("The administration list could not be loaded.");
 
     const usersById = new Map<string, string>();
@@ -269,6 +286,7 @@ export const listAdminPortalData = createServerFn({ method: "GET" })
         email: usersById.get(profile.id) ?? "",
       })),
       modules: modules ?? [],
+      folders: folders ?? [],
       items: items ?? [],
       logs: logs ?? [],
     };
@@ -500,6 +518,127 @@ export const updateStudentPortalAccess = createServerFn({ method: "POST" })
     return { saved: true };
   });
 
+export const savePortalFolder = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .validator(
+    (input: {
+      id?: string;
+      moduleId: string;
+      parentFolderId?: string | null;
+      title: string;
+      description: string;
+    }) => {
+      if (
+        typeof input.moduleId !== "string" ||
+        (input.id !== undefined && typeof input.id !== "string") ||
+        (input.parentFolderId !== undefined &&
+          input.parentFolderId !== null &&
+          typeof input.parentFolderId !== "string") ||
+        typeof input.title !== "string" ||
+        typeof input.description !== "string"
+      ) {
+        throw new Error("Enter a folder name and description.");
+      }
+      const title = input.title.trim();
+      const description = input.description.trim();
+      if (!input.moduleId || !title || title.length > 100 || description.length > 500) {
+        throw new Error("Add a folder name up to 100 characters and a description up to 500 characters.");
+      }
+      return { ...input, title, description, parentFolderId: input.parentFolderId ?? null };
+    },
+  )
+  .handler(async ({ data, context }) => {
+    await requireAdministrator(context.userId, context.supabase as PortalDb);
+    if (data.parentFolderId) {
+      const { data: parent, error: parentError } = await context.supabase
+        .from("content_folders")
+        .select("id, module_id")
+        .eq("id", data.parentFolderId)
+        .maybeSingle();
+      if (parentError || !parent || parent.module_id !== data.moduleId) {
+        throw new Error("The selected parent folder is invalid.");
+      }
+      if (data.id === data.parentFolderId) {
+        throw new Error("A folder cannot contain itself.");
+      }
+    }
+    let siblingQuery = context.supabase
+      .from("content_folders")
+      .select("id, title")
+      .eq("module_id", data.moduleId);
+    siblingQuery = data.parentFolderId
+      ? siblingQuery.eq("parent_folder_id", data.parentFolderId)
+      : siblingQuery.is("parent_folder_id", null);
+    const { data: siblings, error: siblingError } = await siblingQuery;
+    if (siblingError) throw new Error("Existing folders could not be checked.");
+    if (
+      siblings?.some(
+        (folder) =>
+          folder.id !== data.id && folder.title.trim().toLowerCase() === data.title.toLowerCase(),
+      )
+    ) {
+      throw new Error("A folder with that name already exists here.");
+    }
+
+    if (data.id) {
+      const { data: updated, error } = await context.supabase
+        .from("content_folders")
+        .update({
+          module_id: data.moduleId,
+          parent_folder_id: data.parentFolderId,
+          title: data.title,
+          description: data.description,
+        })
+        .eq("id", data.id)
+        .select("id")
+        .maybeSingle();
+      if (error || !updated) throw new Error("This folder could not be updated.");
+      return { id: updated.id, saved: true };
+    }
+
+    const position = siblings?.length ?? 0;
+    const { data: inserted, error } = await context.supabase
+      .from("content_folders")
+      .insert({
+        module_id: data.moduleId,
+        parent_folder_id: data.parentFolderId,
+        title: data.title,
+        description: data.description,
+        position,
+      })
+      .select("id")
+      .single();
+    if (error || !inserted) throw new Error("This folder could not be created.");
+    return { id: inserted.id, saved: true };
+  });
+
+export const deletePortalFolder = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .validator((input: { id: string }) => {
+    if (typeof input.id !== "string" || !input.id) throw new Error("Choose a folder to delete.");
+    return input;
+  })
+  .handler(async ({ data, context }) => {
+    await requireAdministrator(context.userId, context.supabase as PortalDb);
+    const [{ data: children, error: childError }, { data: items, error: itemError }] =
+      await Promise.all([
+        context.supabase.from("content_folders").select("id").eq("parent_folder_id", data.id),
+        context.supabase.from("content_items").select("id").eq("folder_id", data.id).limit(1),
+      ]);
+    if (childError || itemError) throw new Error("This folder could not be checked before deleting.");
+    if (children?.length || items?.length) {
+      throw new Error("This folder must be empty before it can be deleted.");
+    }
+    const { data: deleted, error } = await context.supabase
+      .from("content_folders")
+      .delete()
+      .eq("id", data.id)
+      .select("id")
+      .maybeSingle();
+    if (error || !deleted) throw new Error("This folder could not be deleted.");
+    return { deleted: true };
+  });
+
 export const savePortalModule = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .validator((input: { id?: string; title: string; description: string }) => {
@@ -606,6 +745,7 @@ export const savePortalContent = createServerFn({ method: "POST" })
     (input: {
       id?: string;
       moduleId: string;
+      folderId?: string | null;
       type: "pdf" | "video" | "audio";
       title: string;
       description: string;
@@ -621,6 +761,9 @@ export const savePortalContent = createServerFn({ method: "POST" })
         typeof input.storagePath !== "string" ||
         typeof input.publish !== "boolean" ||
         (input.id !== undefined && typeof input.id !== "string")
+        || (input.folderId !== undefined &&
+          input.folderId !== null &&
+          typeof input.folderId !== "string")
       ) {
         throw new Error("Check the course item details and try again.");
       }
@@ -646,11 +789,22 @@ export const savePortalContent = createServerFn({ method: "POST" })
     if (moduleError || !module) {
       throw new Error("This course folder no longer exists. Refresh and try again.");
     }
+    if (data.folderId) {
+      const { data: folder, error: folderError } = await context.supabase
+        .from("content_folders")
+        .select("id, module_id")
+        .eq("id", data.folderId)
+        .maybeSingle();
+      if (folderError || !folder || folder.module_id !== data.moduleId) {
+        throw new Error("The selected content folder no longer exists.");
+      }
+    }
     if (data.id) {
       const { data: updated, error } = await context.supabase
         .from("content_items")
         .update({
           module_id: data.moduleId,
+          folder_id: data.folderId ?? null,
           type: data.type,
           title: data.title.trim(),
           description: data.description.trim(),
@@ -665,6 +819,7 @@ export const savePortalContent = createServerFn({ method: "POST" })
     } else {
       const { error } = await context.supabase.from("content_items").insert({
         module_id: data.moduleId,
+        folder_id: data.folderId ?? null,
         type: data.type,
         title: data.title.trim(),
         description: data.description.trim(),

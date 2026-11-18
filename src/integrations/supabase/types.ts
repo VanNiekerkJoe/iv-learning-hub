@@ -59,11 +59,60 @@ export type Database = {
           },
         ]
       }
+      content_folders: {
+        Row: {
+          created_at: string
+          description: string
+          id: string
+          module_id: string
+          parent_folder_id: string | null
+          position: number
+          title: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          description?: string
+          id?: string
+          module_id: string
+          parent_folder_id?: string | null
+          position?: number
+          title: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          description?: string
+          id?: string
+          module_id?: string
+          parent_folder_id?: string | null
+          position?: number
+          title?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "content_folders_module_id_fkey"
+            columns: ["module_id"]
+            isOneToOne: false
+            referencedRelation: "modules"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "content_folders_parent_folder_id_fkey"
+            columns: ["parent_folder_id"]
+            isOneToOne: false
+            referencedRelation: "content_folders"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       content_items: {
         Row: {
           created_at: string
           deleted_at: string | null
           description: string
+          folder_id: string | null
           id: string
           is_hidden: boolean
           module_id: string
@@ -77,6 +126,7 @@ export type Database = {
           created_at?: string
           deleted_at?: string | null
           description?: string
+          folder_id?: string | null
           id?: string
           is_hidden?: boolean
           module_id: string
@@ -90,6 +140,7 @@ export type Database = {
           created_at?: string
           deleted_at?: string | null
           description?: string
+          folder_id?: string | null
           id?: string
           is_hidden?: boolean
           module_id?: string
@@ -105,6 +156,13 @@ export type Database = {
             columns: ["module_id"]
             isOneToOne: false
             referencedRelation: "modules"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "content_items_folder_id_fkey"
+            columns: ["folder_id"]
+            isOneToOne: false
+            referencedRelation: "content_folders"
             referencedColumns: ["id"]
           },
         ]
