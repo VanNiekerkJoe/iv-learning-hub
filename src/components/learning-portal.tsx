@@ -269,11 +269,16 @@ export function LearningPortal() {
     let active = true;
     const { data: listener } = supabase.auth.onAuthStateChange((_event, nextSession) => {
       if (active) {
-        setSession(nextSession);
-        setDashboard(null);
-        setDashboardError("");
-        setSelectedModule(null);
-        setViewer(null);
+        setSession((currentSession) => {
+          const userChanged = currentSession?.user.id !== nextSession?.user.id;
+          if (userChanged) {
+            setDashboard(null);
+            setDashboardError("");
+            setSelectedModule(null);
+            setViewer(null);
+          }
+          return nextSession;
+        });
       }
     });
 
@@ -300,7 +305,7 @@ export function LearningPortal() {
     let active = true;
     setLoadingDashboard(true);
     setDashboardError("");
-    void getLearningDashboard()
+    void loadDashboardWithAuthRetry()
       .then((result) => {
         if (active) setDashboard(result);
       })
@@ -323,11 +328,23 @@ export function LearningPortal() {
   const progress = dashboard?.progress ?? [];
   const profileNeedsTerms = Boolean(profile && !profile.terms_accepted_at);
 
+  async function loadDashboardWithAuthRetry() {
+    try {
+      return await getLearningDashboard();
+    } catch (error) {
+      if (!messageFrom(error).toLowerCase().includes("unauthorized")) throw error;
+      const { data, error: refreshError } = await supabase.auth.refreshSession();
+      if (refreshError || !data.session) throw refreshError ?? error;
+      setSession(data.session);
+      return getLearningDashboard();
+    }
+  }
+
   async function loadDashboard() {
     setLoadingDashboard(true);
     setDashboardError("");
     try {
-      setDashboard(await getLearningDashboard());
+      setDashboard(await loadDashboardWithAuthRetry());
     } catch (error) {
       setDashboardError(messageFrom(error));
     } finally {
@@ -353,7 +370,16 @@ export function LearningPortal() {
     setOpeningContent(item.id);
     setPageNotice("");
     try {
-      const access = await getTemporaryContentAccess({ data: { contentId: item.id } });
+      let access: Awaited<ReturnType<typeof getTemporaryContentAccess>>;
+      try {
+        access = await getTemporaryContentAccess({ data: { contentId: item.id } });
+      } catch (error) {
+        if (!messageFrom(error).toLowerCase().includes("unauthorized")) throw error;
+        const { data, error: refreshError } = await supabase.auth.refreshSession();
+        if (refreshError || !data.session) throw refreshError ?? error;
+        setSession(data.session);
+        access = await getTemporaryContentAccess({ data: { contentId: item.id } });
+      }
       setViewer({ item, url: access.url });
       void saveLearningProgress({
         data: { contentId: item.id, status: "in_progress", positionSeconds: 0 },

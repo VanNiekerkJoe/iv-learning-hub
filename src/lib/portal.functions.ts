@@ -633,14 +633,14 @@ export const getTemporaryContentAccess = createServerFn({ method: "POST" })
 
     const { data: signedFile, error: signingError } = await context.supabase.storage
       .from("iv-learning-content")
-      .createSignedUrl(content.storage_path, 90);
+      .createSignedUrl(content.storage_path, 60 * 60);
     if (signingError || !signedFile)
       throw new Error("A temporary learning link could not be created.");
     return {
       url: signedFile.signedUrl,
       type: content.type,
       title: content.title,
-      expiresInSeconds: 90,
+      expiresInSeconds: 60 * 60,
     };
   });
 
