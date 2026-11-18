@@ -5,6 +5,9 @@ The application uses TanStack Start, React, TypeScript, and Supabase. Nitro gene
 Build a secure learning web app for students of Inyapa Vhusiku Consulting (IV Consulting), a South African accredited training provider. Students log in and access 6 modules. Each module contains textbooks (PDF), videos, and podcasts (audio). An admin manages all content. The two non-negotiables are: (1) the admin is not technical, so every content action must be extremely easy and quick, and (2) content must be protected as far as is realistically possible from being downloaded, copied, or resold. Everything must be consumed inside the web app.
 
 
+
+
+
 ## 1. Brand and design
 Match the look and feel of https://ivconsulting.co.za/. Use this palette as CSS variables / Tailwind theme tokens:
 
