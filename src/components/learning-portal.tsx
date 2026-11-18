@@ -216,8 +216,9 @@ function kindLabel(kind: ContentKind, filePath = "") {
   if (kind === "audio") return "Podcast";
   const extension = filePath.split(".").at(-1)?.toLowerCase();
   if (extension === "pptx") return "Presentation";
-  if (extension === "docx") return "Document";
-  if (extension === "jpg" || extension === "jpeg") return "Image";
+  if (extension === "docx" || extension === "doc") return "Document";
+  if (extension === "xlsx" || extension === "xls") return "Spreadsheet";
+  if (extension === "jpg" || extension === "jpeg" || extension === "png") return "Image";
   return "Textbook";
 }
 
@@ -1094,8 +1095,14 @@ function ContentViewer({
   const lastSaved = useRef(0);
   const startAt = savedProgress?.position_seconds ?? 0;
   const fileExtension = item.storage_path.split(".").at(-1)?.toLowerCase();
-  const isImage = fileExtension === "jpg" || fileExtension === "jpeg";
-  const isOfficeDocument = fileExtension === "pptx" || fileExtension === "docx";
+  const isImage =
+    fileExtension === "jpg" || fileExtension === "jpeg" || fileExtension === "png";
+  const isOfficeDocument =
+    fileExtension === "pptx" ||
+    fileExtension === "docx" ||
+    fileExtension === "doc" ||
+    fileExtension === "xlsx" ||
+    fileExtension === "xls";
   const [mediaReady, setMediaReady] = useState(isOfficeDocument);
 
   async function saveProgress(status: "in_progress" | "completed", positionSeconds: number) {
@@ -2915,7 +2922,7 @@ function ContentForm({
     if (!detectedKind) {
       setFile(null);
       setError(
-        "Choose a PDF, PowerPoint or Word document, JPG image, video (MP4, MOV, M4V, WebM), or audio file (MP3, M4A, WAV).",
+        "Choose a PDF, PowerPoint, Word or Excel document, JPG or PNG image, video (MP4, MOV, M4V, WebM), or audio file (MP3, M4A, WAV).",
       );
       return;
     }
@@ -3048,14 +3055,14 @@ function ContentForm({
                 id="content-file"
                 className="file-input"
                 type="file"
-                accept=".pdf,.pptx,.docx,.jpg,.jpeg,.mp4,.mov,.m4v,.webm,.mp3,.m4a,.wav"
+                accept=".pdf,.pptx,.docx,.doc,.xlsx,.xls,.jpg,.jpeg,.png,.mp4,.mov,.m4v,.webm,.mp3,.m4a,.wav"
                 onChange={(event) => selectFile(event.currentTarget.files?.[0] ?? null)}
                 required
               />
               <p className="form-hint">
                 {preview
                   ? "Choose a sample file to try the form. It will not be uploaded or stored."
-                  : "PDF, PPTX, DOCX, JPG, MP4, MOV, M4V, WebM, MP3, M4A, or WAV. Office documents open as downloads; images are shown in the viewer. Files upload privately and can be up to 2 GB."}
+                  : "PDF, PPTX, DOCX, DOC, XLSX, XLS, JPG, PNG, MP4, MOV, M4V, WebM, MP3, M4A, or WAV. Office documents open as downloads; images are shown in the viewer. Files upload privately and can be up to 2 GB."}
               </p>
             </>
           )}

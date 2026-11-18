@@ -24,8 +24,12 @@ const fileKinds: Record<string, LearningKind> = {
   wav: "audio",
   pptx: "pdf",
   docx: "pdf",
+  doc: "pdf",
+  xlsx: "pdf",
+  xls: "pdf",
   jpg: "pdf",
   jpeg: "pdf",
+  png: "pdf",
 };
 
 export function detectLearningKind(filename: string): LearningKind | null {
