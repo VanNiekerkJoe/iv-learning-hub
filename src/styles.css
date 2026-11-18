@@ -2092,40 +2092,6 @@
   text-align: center;
 }
 
-.preview-role-switch {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 12px;
-  padding-block: 12px;
-  color: oklch(0.46 0 0);
-  font-size: 0.76rem;
-  font-weight: 700;
-}
-.preview-role-switch > div {
-  display: inline-flex;
-  gap: 3px;
-  padding: 3px;
-  border: 1px solid oklch(0.89 0 0);
-  border-radius: 999px;
-  background: white;
-}
-.preview-role-switch button {
-  min-width: 90px;
-  min-height: 42px;
-  padding: 6px 12px;
-  border: 0;
-  border-radius: 999px;
-  background: transparent;
-  color: oklch(0.46 0 0);
-  cursor: pointer;
-  font: inherit;
-}
-.preview-role-switch button.active {
-  background: var(--brand-charcoal);
-  color: white;
-}
-
 .admin-sidebar nav button {
   min-height: 52px;
   padding-inline: 14px;
@@ -2451,9 +2417,6 @@
   .admin-sidebar nav button {
     min-width: 0;
     justify-content: flex-start;
-  }
-  .preview-role-switch {
-    justify-content: space-between;
   }
   .folder-intro {
     align-items: stretch;
@@ -3159,82 +3122,7 @@
   }
 }
 
-/* Role preview switch and refined administration overview */
-.preview-role-switch {
-  justify-content: space-between;
-  min-height: 76px;
-  padding-block: 12px;
-}
-
-.preview-role-label {
-  color: var(--brand-charcoal);
-  font-size: 0.78rem;
-  font-weight: 700;
-}
-
-.preview-role-switch-track {
-  position: relative;
-  isolation: isolate;
-  display: grid;
-  grid-template-columns: repeat(2, minmax(116px, 1fr));
-  gap: 3px;
-  padding: 4px;
-  border: 1px solid oklch(0.88 0.012 255);
-  border-radius: 999px;
-  background: white;
-  box-shadow: 0 3px 10px oklch(0.2 0.025 255 / 7%);
-}
-
-.preview-role-switch-track::before {
-  position: absolute;
-  z-index: -1;
-  inset: 4px auto 4px 4px;
-  width: calc((100% - 11px) / 2);
-  border-radius: 999px;
-  background: var(--brand-charcoal);
-  content: "";
-  transition: transform 220ms cubic-bezier(0.2, 0.8, 0.2, 1);
-}
-
-.preview-role-switch-track.student-selected::before {
-  transform: translateX(calc(100% + 3px));
-}
-
-.preview-role-switch-track button {
-  position: relative;
-  z-index: 1;
-  min-width: 0;
-  min-height: 42px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  padding: 7px 15px;
-  border: 0;
-  border-radius: 999px;
-  background: transparent;
-  color: oklch(0.42 0.025 255);
-  cursor: pointer;
-  font: inherit;
-  font-size: 0.82rem;
-  font-weight: 700;
-  transition: color 180ms ease;
-}
-
-.preview-role-switch-track button.active {
-  color: white;
-}
-
-.preview-role-switch-track button svg {
-  width: 17px;
-  height: 17px;
-}
-
-.preview-role-switch-track button:focus-visible {
-  outline: 2px solid var(--brand-blue);
-  outline-offset: 3px;
-}
-
+/* Refined administration overview */
 .admin-overview {
   padding-top: 22px;
 }
@@ -3320,22 +3208,6 @@
 }
 
 @media (max-width: 680px) {
-  .preview-role-switch {
-    min-height: 68px;
-    gap: 8px;
-  }
-
-  .preview-role-switch-track {
-    grid-template-columns: repeat(2, minmax(90px, 1fr));
-  }
-
-  .preview-role-switch-track button {
-    min-height: 40px;
-    gap: 6px;
-    padding-inline: 11px;
-    font-size: 0.78rem;
-  }
-
   .admin-welcome-band {
     min-height: 132px;
     gap: 14px;
@@ -3358,11 +3230,5 @@
 
   .admin-overview .stat-grid {
     grid-template-columns: 1fr;
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .preview-role-switch-track::before {
-    transition: none;
   }
 }

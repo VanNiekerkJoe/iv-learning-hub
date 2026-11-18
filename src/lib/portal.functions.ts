@@ -4,7 +4,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 
 import type { Database } from "@/integrations/supabase/types";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
-import { isRecentlyDeleted } from "@/lib/learning-domain";
+import { isRecentlyDeleted, STARTER_MODULES } from "@/lib/learning-domain";
 
 type PortalDb = SupabaseClient<Database>;
 
@@ -63,7 +63,7 @@ export const getLearningDashboard = createServerFn({ method: "GET" })
         .order("position"),
       context.supabase
         .from("content_items")
-        .select("id, module_id, type, title, description, position")
+        .select("id, module_id, type, title, description, position, storage_path")
         .in("module_id", moduleIds)
         .eq("is_hidden", false)
         .is("deleted_at", null)
@@ -107,7 +107,7 @@ export const getLearningModule = createServerFn({ method: "GET" })
         .maybeSingle(),
       context.supabase
         .from("content_items")
-        .select("id, module_id, type, title, description, position")
+        .select("id, module_id, type, title, description, position, storage_path")
         .eq("module_id", data.moduleId)
         .eq("is_hidden", false)
         .is("deleted_at", null)
@@ -271,6 +271,72 @@ export const listAdminPortalData = createServerFn({ method: "GET" })
       modules: modules ?? [],
       items: items ?? [],
       logs: logs ?? [],
+    };
+  });
+
+export const setupStarterModules = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .handler(async ({ context }) => {
+    await requireAdministrator(context.userId, context.supabase as PortalDb);
+    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+    const starterTitles = STARTER_MODULES.map((module) => module.title);
+    const { data: existingModules, error: existingModulesError } = await supabaseAdmin
+      .from("modules")
+      .select("id, title")
+      .in("title", starterTitles);
+    if (existingModulesError) throw new Error("Existing learning modules could not be checked.");
+
+    const existingTitles = new Set((existingModules ?? []).map((module) => module.title));
+    const missingModules = STARTER_MODULES.filter((module) => !existingTitles.has(module.title));
+    if (missingModules.length) {
+      const { error: insertError } = await supabaseAdmin
+        .from("modules")
+        .insert(missingModules.map((module) => ({ ...module })));
+      if (insertError) throw new Error("The starter learning modules could not be created.");
+    }
+
+    const { data: modules, error: moduleLookupError } = await supabaseAdmin
+      .from("modules")
+      .select("id")
+      .in("title", starterTitles);
+    if (moduleLookupError || !modules?.length) {
+      throw new Error("The starter learning modules could not be loaded.");
+    }
+
+    const studentIds: string[] = [];
+    for (let offset = 0; ; offset += 1000) {
+      const { data: students, error: studentError } = await supabaseAdmin
+        .from("profiles")
+        .select("id")
+        .eq("role", "student")
+        .eq("active", true)
+        .order("id")
+        .range(offset, offset + 999);
+      if (studentError) throw new Error("Active student accounts could not be loaded.");
+      studentIds.push(...(students ?? []).map((student) => student.id));
+      if ((students?.length ?? 0) < 1000) break;
+    }
+
+    const assignments = studentIds.flatMap((studentId) =>
+      modules.map((module) => ({ student_id: studentId, module_id: module.id })),
+    );
+    for (let offset = 0; offset < assignments.length; offset += 500) {
+      const { error: assignmentError } = await supabaseAdmin
+        .from("student_modules")
+        .upsert(assignments.slice(offset, offset + 500), {
+          onConflict: "student_id,module_id",
+        });
+      if (assignmentError) {
+        throw new Error(
+          "The starter modules were created, but student assignments could not be saved.",
+        );
+      }
+    }
+
+    return {
+      addedModules: missingModules.length,
+      assignedStudents: studentIds.length,
+      moduleCount: modules.length,
     };
   });
 

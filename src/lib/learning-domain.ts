@@ -1,5 +1,18 @@
 export type LearningKind = "pdf" | "video" | "audio";
 
+export const STARTER_MODULES = [
+  {
+    title: "Induction",
+    description: "Start here to learn about the course and how to get started.",
+    position: 0,
+  },
+  ...Array.from({ length: 6 }, (_, index) => ({
+    title: `Module ${index + 1}`,
+    description: "Course materials will be added by your administrator.",
+    position: index + 1,
+  })),
+];
+
 const fileKinds: Record<string, LearningKind> = {
   pdf: "pdf",
   mp4: "video",
@@ -9,6 +22,10 @@ const fileKinds: Record<string, LearningKind> = {
   mp3: "audio",
   m4a: "audio",
   wav: "audio",
+  pptx: "pdf",
+  docx: "pdf",
+  jpg: "pdf",
+  jpeg: "pdf",
 };
 
 export function detectLearningKind(filename: string): LearningKind | null {

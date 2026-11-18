@@ -45,9 +45,15 @@ import {
   saveLearningProgress,
   savePortalModule,
   savePortalContent,
+  setupStarterModules,
   updateStudentPortalAccess,
 } from "@/lib/portal.functions";
-import { detectLearningKind, isRecentlyDeleted, titleFromFilename } from "@/lib/learning-domain";
+import {
+  detectLearningKind,
+  isRecentlyDeleted,
+  STARTER_MODULES,
+  titleFromFilename,
+} from "@/lib/learning-domain";
 import { supabase } from "@/integrations/supabase/client";
 import type { Tables } from "@/integrations/supabase/types";
 
@@ -75,37 +81,6 @@ type AuthSession = NonNullable<
   Awaited<ReturnType<typeof supabase.auth.getSession>>["data"]["session"]
 >;
 
-const STARTER_MODULES = [
-  {
-    title: "Induction",
-    description: "Start here to learn about the course and how to get started.",
-    position: 0,
-  },
-  ...Array.from({ length: 6 }, (_, index) => ({
-    title: `Module ${index + 1}`,
-    description: "Course materials will be added by your administrator.",
-    position: index + 1,
-  })),
-];
-
-const PREVIEW_PROFILE: Profile = {
-  id: "local-preview-student",
-  full_name: "Alex Morgan",
-  student_id: "IV-PREVIEW",
-  role: "student",
-  active: true,
-  terms_accepted_at: new Date(0).toISOString(),
-  email: "preview@example.test",
-};
-
-const PREVIEW_ADMIN_PROFILE: Profile = {
-  ...PREVIEW_PROFILE,
-  id: "local-preview-admin",
-  full_name: "Casey Admin",
-  student_id: "IV-ADMIN",
-  role: "admin",
-};
-
 const PREVIEW_MODULE_ID = "preview-module-1";
 const PREVIEW_MODULES: Module[] = Array.from({ length: 7 }, (_, index) => ({
   id: index === 0 ? "preview-induction" : `preview-module-${index}`,
@@ -122,6 +97,7 @@ const PREVIEW_CONTENT: ContentItem[] = [
     id: "preview-textbook",
     module_id: PREVIEW_MODULE_ID,
     type: "pdf",
+    storage_path: "preview/sample-textbook.pdf",
     title: "Sample textbook",
     description: "Preview-only placeholder. Real materials require an authenticated account.",
     position: 1,
@@ -130,6 +106,7 @@ const PREVIEW_CONTENT: ContentItem[] = [
     id: "preview-video",
     module_id: PREVIEW_MODULE_ID,
     type: "video",
+    storage_path: "preview/sample-lesson.mp4",
     title: "Sample lesson video",
     description: "Preview-only placeholder.",
     position: 2,
@@ -138,6 +115,7 @@ const PREVIEW_CONTENT: ContentItem[] = [
     id: "preview-podcast",
     module_id: PREVIEW_MODULE_ID,
     type: "audio",
+    storage_path: "preview/sample-podcast.mp3",
     title: "Sample podcast",
     description: "Preview-only placeholder.",
     position: 3,
@@ -145,18 +123,7 @@ const PREVIEW_CONTENT: ContentItem[] = [
 ];
 
 const PREVIEW_ADMIN_DATA: AdminData = {
-  profiles: [
-    {
-      id: PREVIEW_PROFILE.id,
-      full_name: PREVIEW_PROFILE.full_name,
-      student_id: PREVIEW_PROFILE.student_id,
-      role: "student",
-      active: true,
-      created_at: "2026-10-12T09:30:00.000Z",
-      terms_accepted_at: PREVIEW_PROFILE.terms_accepted_at,
-      email: PREVIEW_PROFILE.email,
-    },
-  ],
+  profiles: [],
   modules: PREVIEW_MODULES,
   items: [
     ...PREVIEW_CONTENT.map((item) => ({
@@ -179,26 +146,68 @@ const PREVIEW_ADMIN_DATA: AdminData = {
       created_at: "2026-09-01T10:00:00.000Z",
     },
   ],
-  logs: [
-    {
-      id: "preview-log-1",
-      student_id: PREVIEW_PROFILE.id,
-      content_id: PREVIEW_CONTENT[0]?.id ?? null,
-      event: "opened",
-      ip: "127.0.0.1",
-      created_at: "2026-11-17T09:30:00.000Z",
-    },
-  ],
+  logs: [],
 };
+
+const PREVIEW_STORAGE_KEY = "iv-learning-hub.preview-admin.v1";
+const LEGACY_PREVIEW_STUDENT_ID = "local-preview-student";
+
+type PreviewState = {
+  data: AdminData;
+  assignments: Record<string, string[]>;
+};
+
+function loadPreviewState(): PreviewState | null {
+  if (typeof window === "undefined") return null;
+
+  try {
+    const storedState = window.localStorage.getItem(PREVIEW_STORAGE_KEY);
+    if (!storedState) return null;
+    const parsedState = JSON.parse(storedState) as Partial<PreviewState>;
+    if (
+      !parsedState.data ||
+      !Array.isArray(parsedState.data.profiles) ||
+      !Array.isArray(parsedState.data.modules) ||
+      !Array.isArray(parsedState.data.items) ||
+      !Array.isArray(parsedState.data.logs) ||
+      !parsedState.assignments ||
+      typeof parsedState.assignments !== "object"
+    ) {
+      return null;
+    }
+    const assignments = Object.fromEntries(
+      Object.entries(parsedState.assignments).filter(
+        ([studentId]) => studentId !== LEGACY_PREVIEW_STUDENT_ID,
+      ),
+    );
+    return {
+      data: {
+        ...parsedState.data,
+        profiles: parsedState.data.profiles.filter(
+          (profile) => profile.id !== LEGACY_PREVIEW_STUDENT_ID,
+        ),
+        logs: parsedState.data.logs.filter((log) => log.student_id !== LEGACY_PREVIEW_STUDENT_ID),
+      },
+      assignments,
+    };
+  } catch (error) {
+    console.warn("The saved local preview data could not be loaded.", error);
+    return null;
+  }
+}
 
 function messageFrom(error: unknown) {
   return error instanceof Error ? error.message : "Something went wrong. Please try again.";
 }
 
-function kindLabel(kind: ContentKind) {
-  if (kind === "pdf") return "Textbook";
+function kindLabel(kind: ContentKind, filePath = "") {
   if (kind === "video") return "Video";
-  return "Podcast";
+  if (kind === "audio") return "Podcast";
+  const extension = filePath.split(".").at(-1)?.toLowerCase();
+  if (extension === "pptx") return "Presentation";
+  if (extension === "docx") return "Document";
+  if (extension === "jpg" || extension === "jpeg") return "Image";
+  return "Textbook";
 }
 
 function kindIcon(kind: ContentKind) {
@@ -229,11 +238,6 @@ export function LearningPortal() {
   const userId = session?.user.id;
 
   useEffect(() => {
-    if (import.meta.env.DEV) {
-      setAuthReady(true);
-      return;
-    }
-
     let active = true;
     const { data: listener } = supabase.auth.onAuthStateChange((_event, nextSession) => {
       if (active) {
@@ -348,7 +352,11 @@ export function LearningPortal() {
 
   async function signOut() {
     const { error } = await supabase.auth.signOut();
-    if (error) setPageNotice(error.message);
+    if (error) {
+      setPageNotice(error.message);
+    } else {
+      setSession(null);
+    }
   }
 
   if (!authReady) {
@@ -356,8 +364,7 @@ export function LearningPortal() {
   }
 
   if (!session) {
-    if (import.meta.env.DEV) return <LocalPreviewPortal />;
-    return <LoginScreen notice={pageNotice} setNotice={setPageNotice} />;
+    return <LoginScreen notice={pageNotice} setNotice={setPageNotice} onSignedIn={setSession} />;
   }
 
   if (loadingDashboard && !dashboard) {
@@ -469,102 +476,6 @@ export function LearningPortal() {
   );
 }
 
-function LocalPreviewPortal() {
-  const [previewRole, setPreviewRole] = useState<"admin" | "student">("admin");
-  const [selectedModule, setSelectedModule] = useState<Module | null>(null);
-  const [search, setSearch] = useState("");
-  const [kind, setKind] = useState<"all" | ContentKind>("all");
-  const [notice, setNotice] = useState("");
-  const moduleContent = selectedModule
-    ? PREVIEW_CONTENT.filter((item) => item.module_id === selectedModule.id)
-    : [];
-  const profile = previewRole === "admin" ? PREVIEW_ADMIN_PROFILE : PREVIEW_PROFILE;
-
-  return (
-    <PortalFrame profile={profile} onSignOut={() => undefined} showSignOut={false}>
-      <div className="portal-container preview-role-switch">
-        <span className="preview-role-label">Preview workspace</span>
-        <div
-          className={`preview-role-switch-track ${previewRole === "student" ? "student-selected" : ""}`}
-          role="group"
-          aria-label="Choose preview workspace"
-        >
-          <button
-            className={previewRole === "admin" ? "active" : ""}
-            type="button"
-            aria-pressed={previewRole === "admin"}
-            onClick={() => {
-              setPreviewRole("admin");
-              setSelectedModule(null);
-              setNotice("");
-            }}
-          >
-            <ShieldCheck aria-hidden="true" />
-            Admin
-          </button>
-          <button
-            className={previewRole === "student" ? "active" : ""}
-            type="button"
-            aria-pressed={previewRole === "student"}
-            onClick={() => {
-              setPreviewRole("student");
-              setSelectedModule(null);
-              setNotice("");
-            }}
-          >
-            <GraduationCap aria-hidden="true" />
-            Student
-          </button>
-        </div>
-      </div>
-      {previewRole === "admin" ? (
-        <AdminWorkspace profile={PREVIEW_ADMIN_PROFILE} preview />
-      ) : selectedModule ? (
-        <ModuleWorkspace
-          module={selectedModule}
-          content={moduleContent}
-          progress={[]}
-          search={search}
-          setSearch={setSearch}
-          kind={kind}
-          setKind={setKind}
-          error=""
-          openingContent={null}
-          onBack={() => setSelectedModule(null)}
-          onOpenItem={() =>
-            setNotice("Sample preview item only. Sign in to open real course materials.")
-          }
-        />
-      ) : (
-        <StudentDashboard
-          profile={PREVIEW_PROFILE}
-          modules={PREVIEW_MODULES}
-          content={PREVIEW_CONTENT}
-          progress={[]}
-          onOpenModule={(module) => {
-            setNotice("");
-            setSearch("");
-            setKind("all");
-            setSelectedModule(module);
-          }}
-          onExplore={() => {
-            const firstModule = PREVIEW_MODULES[0];
-            if (firstModule) setSelectedModule(firstModule);
-          }}
-        />
-      )}
-      {notice && (
-        <p className="portal-toast" role="status">
-          {notice}
-          <button type="button" aria-label="Dismiss message" onClick={() => setNotice("")}>
-            <X aria-hidden="true" />
-          </button>
-        </p>
-      )}
-    </PortalFrame>
-  );
-}
-
 function LoadingScreen({ label }: { label: string }) {
   return (
     <main className="portal-loading">
@@ -578,12 +489,10 @@ function LoadingScreen({ label }: { label: string }) {
 function PortalFrame({
   profile,
   onSignOut,
-  showSignOut = true,
   children,
 }: {
   profile: Profile | null;
   onSignOut: () => void;
-  showSignOut?: boolean;
   children: ReactNode;
 }) {
   return (
@@ -612,7 +521,7 @@ function PortalFrame({
             <span>LEARNING PORTAL</span>
           </a>
           <div className="header-account">
-            {profile && showSignOut && (
+            {profile && (
               <>
                 <span className="account-name">{profile.full_name}</span>
                 <button
@@ -632,8 +541,8 @@ function PortalFrame({
       <main className="portal-main">
         {profile?.id.startsWith("local-preview-") && (
           <div className="preview-banner" role="status">
-            Interactive demo · sample data only · demo edits reset if you leave Admin or refresh;
-            real accounts and files require sign-in
+            Interactive demo · sample data saved in this browser · real accounts and files require
+            sign-in
           </div>
         )}
         {children}
@@ -654,9 +563,11 @@ function PortalFrame({
 function LoginScreen({
   notice,
   setNotice,
+  onSignedIn,
 }: {
   notice: string;
   setNotice: (notice: string) => void;
+  onSignedIn?: (session: AuthSession) => void;
 }) {
   const [mode, setMode] = useState<"sign-in" | "recovery">("sign-in");
   const [email, setEmail] = useState("");
@@ -675,8 +586,13 @@ function LoginScreen({
         if (error) throw error;
         setNotice("If an account exists for that email, a password reset link is on its way.");
       } else {
-        const { error } = await supabase.auth.signInWithPassword({ email: email.trim(), password });
+        const { data, error } = await supabase.auth.signInWithPassword({
+          email: email.trim(),
+          password,
+        });
         if (error) throw error;
+        if (!data.session) throw new Error("Unable to start a session. Please try again.");
+        onSignedIn?.(data.session);
       }
     } catch (error) {
       setNotice(messageFrom(error));
@@ -876,7 +792,7 @@ function StudentDashboard({
           <p className="eyebrow">YOUR COURSES</p>
           <h2>My learning modules</h2>
           <p className="dashboard-subheading">
-            Open a course to find your textbooks, videos, and podcasts.
+            Open a course to find your learning materials.
           </p>
         </div>
         <label className="search-field">
@@ -1033,7 +949,7 @@ function ModuleWorkspace({
   const progressById = new Map(progress.map((item) => [item.content_id, item]));
   const categories: { id: "all" | ContentKind; label: string }[] = [
     { id: "all", label: "All materials" },
-    { id: "pdf", label: "Textbooks" },
+    { id: "pdf", label: "Documents" },
     { id: "video", label: "Videos" },
     { id: "audio", label: "Podcasts" },
   ];
@@ -1103,7 +1019,7 @@ function ModuleWorkspace({
               <article className="content-row" key={item.id}>
                 <span className={`content-kind-icon ${item.type}`}>{kindIcon(item.type)}</span>
                 <div className="content-row-copy">
-                  <span className="module-kicker">{kindLabel(item.type)}</span>
+                  <span className="module-kicker">{kindLabel(item.type, item.storage_path)}</span>
                   <h3>{item.title}</h3>
                   <p>{item.description || "Open this material to continue learning."}</p>
                 </div>
@@ -1157,7 +1073,10 @@ function ContentViewer({
   const savedProgress = progress.find((entry) => entry.content_id === item.id);
   const lastSaved = useRef(0);
   const startAt = savedProgress?.position_seconds ?? 0;
-  const [mediaReady, setMediaReady] = useState(false);
+  const fileExtension = item.storage_path.split(".").at(-1)?.toLowerCase();
+  const isImage = fileExtension === "jpg" || fileExtension === "jpeg";
+  const isOfficeDocument = fileExtension === "pptx" || fileExtension === "docx";
+  const [mediaReady, setMediaReady] = useState(isOfficeDocument);
 
   async function saveProgress(status: "in_progress" | "completed", positionSeconds: number) {
     try {
@@ -1192,7 +1111,7 @@ function ContentViewer({
         <header className="viewer-header">
           <div>
             <span className="module-kicker">
-              {kindLabel(item.type)} · {profile.student_id}
+              {kindLabel(item.type, item.storage_path)} · {profile.student_id}
             </span>
             <h2 id="viewer-title">{item.title}</h2>
           </div>
@@ -1206,7 +1125,31 @@ function ContentViewer({
           </button>
         </header>
         <div className="viewer-content">
-          {item.type === "pdf" ? (
+          {item.type === "pdf" && isImage ? (
+            <div className="media-wrap document-image-wrap">
+              <img
+                src={url}
+                alt={item.title}
+                onLoad={() => setMediaReady(true)}
+                onError={() => {
+                  setMediaReady(true);
+                  onNotice("This learning image could not be displayed.");
+                }}
+              />
+              <div className="watermark">
+                {profile.full_name} · {profile.student_id}
+              </div>
+            </div>
+          ) : item.type === "pdf" && isOfficeDocument ? (
+            <div className="document-download">
+              <FileText aria-hidden="true" />
+              <p>This {kindLabel(item.type, item.storage_path)} is available as a download.</p>
+              <a className="brand-button" href={url} download>
+                Download {kindLabel(item.type, item.storage_path)}
+                <ArrowRight aria-hidden="true" />
+              </a>
+            </div>
+          ) : item.type === "pdf" ? (
             <div className="pdf-wrap">
               <iframe
                 title={item.title}
@@ -1286,14 +1229,14 @@ function ContentViewer({
 }
 
 function AdminWorkspace({ profile, preview = false }: { profile: Profile; preview?: boolean }) {
-  const [data, setData] = useState<AdminData | null>(preview ? PREVIEW_ADMIN_DATA : null);
-  const [assignments, setAssignments] = useState<Record<string, string[]>>(
-    preview
-      ? {
-          [PREVIEW_PROFILE.id]: PREVIEW_MODULES.slice(0, 2).map((module) => module.id),
-        }
-      : {},
-  );
+  const [data, setData] = useState<AdminData | null>(() => {
+    if (!preview) return null;
+    return loadPreviewState()?.data ?? PREVIEW_ADMIN_DATA;
+  });
+  const [assignments, setAssignments] = useState<Record<string, string[]>>(() => {
+    if (!preview) return {};
+    return loadPreviewState()?.assignments ?? {};
+  });
   const [error, setError] = useState("");
   const [retryableError, setRetryableError] = useState(false);
   const [loading, setLoading] = useState(!preview);
@@ -1311,6 +1254,17 @@ function AdminWorkspace({ profile, preview = false }: { profile: Profile; previe
   const [moduleFormOpen, setModuleFormOpen] = useState(false);
   const [moduleEditing, setModuleEditing] = useState<AdminModule | null>(null);
   const contentFolder = data?.modules.find((module) => module.id === contentFolderId) ?? null;
+  const missingStarterModules = STARTER_MODULES.filter(
+    (starter) => !data?.modules.some((module) => module.title === starter.title),
+  );
+  const starterModuleIds = (data?.modules ?? [])
+    .filter((module) => STARTER_MODULES.some((starter) => starter.title === module.title))
+    .map((module) => module.id);
+  const activeStudents =
+    data?.profiles.filter((person) => person.active && person.role === "student") ?? [];
+  const studentsMissingStarterModules = activeStudents.some((student) =>
+    starterModuleIds.some((moduleId) => !assignments[student.id]?.includes(moduleId)),
+  );
 
   const refresh = useCallback(async () => {
     if (preview) {
@@ -1325,11 +1279,36 @@ function AdminWorkspace({ profile, preview = false }: { profile: Profile; previe
     setError("");
     setRetryableError(false);
     try {
-      const [portalData, assignmentResult] = await Promise.all([
+      let [portalData, assignmentResult] = await Promise.all([
         listAdminPortalData(),
         supabase.from("student_modules").select("student_id, module_id"),
       ]);
       if (assignmentResult.error) throw assignmentResult.error;
+      const missingStarterModule = STARTER_MODULES.some(
+        (starter) =>
+          !portalData.modules.some(
+            (module) => module.title.trim().toLowerCase() === starter.title.toLowerCase(),
+          ),
+      );
+      if (missingStarterModule) {
+        await setupStarterModules();
+        [portalData, assignmentResult] = await Promise.all([
+          listAdminPortalData(),
+          supabase.from("student_modules").select("student_id, module_id"),
+        ]);
+        if (assignmentResult.error) throw assignmentResult.error;
+        const stillMissingStarterModule = STARTER_MODULES.some(
+          (starter) =>
+            !portalData.modules.some(
+              (module) => module.title.trim().toLowerCase() === starter.title.toLowerCase(),
+            ),
+        );
+        if (stillMissingStarterModule) {
+          throw new Error(
+            "The starter modules were created but could not be loaded. Verify this account has administrator access in Supabase.",
+          );
+        }
+      }
       const nextAssignments: Record<string, string[]> = {};
       for (const assignment of assignmentResult.data ?? []) {
         nextAssignments[assignment.student_id] = [
@@ -1351,31 +1330,48 @@ function AdminWorkspace({ profile, preview = false }: { profile: Profile; previe
     void refresh();
   }, [refresh]);
 
+  useEffect(() => {
+    if (!preview || !data || typeof window === "undefined") return;
+    try {
+      window.localStorage.setItem(
+        PREVIEW_STORAGE_KEY,
+        JSON.stringify({ data, assignments } satisfies PreviewState),
+      );
+    } catch (error) {
+      console.warn("Local preview changes could not be persisted.", error);
+    }
+  }, [assignments, data, preview]);
+
   async function seedModules() {
     if (preview) {
       setError("");
       setRetryableError(false);
+      const newModules = missingStarterModules.map((module) => ({
+        ...module,
+        id: `preview-module-${crypto.randomUUID()}`,
+      }));
+      const allStarterModuleIds = [...starterModuleIds, ...newModules.map((module) => module.id)];
       setData((current) =>
-        current?.modules.length
-          ? current
-          : {
-              ...(current ?? PREVIEW_ADMIN_DATA),
-              modules: STARTER_MODULES.map((module, index) => ({
-                ...module,
-                id: `preview-module-${crypto.randomUUID()}-${index}`,
-              })),
-            },
+        current ? { ...current, modules: [...current.modules, ...newModules] } : current,
       );
-      setNotice("Sample folders added. Preview changes are temporary and won’t be saved.");
+      setAssignments((current) => {
+        const nextAssignments = { ...current };
+        for (const student of activeStudents) {
+          nextAssignments[student.id] = Array.from(
+            new Set([...(nextAssignments[student.id] ?? []), ...allStarterModuleIds]),
+          );
+        }
+        return nextAssignments;
+      });
+      setNotice("All starter modules are assigned to sample students and saved in this browser.");
       return;
     }
     setBusy(true);
     setNotice("");
     try {
-      const { error: insertError } = await supabase.from("modules").insert(STARTER_MODULES);
-      if (insertError) throw insertError;
+      const result = await setupStarterModules();
       setNotice(
-        "Induction and Modules 1–6 are ready. You can start adding course content to any module.",
+        `${result.moduleCount} starter modules are ready and assigned to ${result.assignedStudents} active students.`,
       );
       await refresh();
     } catch (caught) {
@@ -1416,7 +1412,7 @@ function AdminWorkspace({ profile, preview = false }: { profile: Profile; previe
             }
           : current,
       );
-      setNotice("Sample folder saved. Preview changes are temporary and won’t be saved.");
+      setNotice("Sample folder saved in this browser.");
       return;
     }
     await savePortalModule({ data: input });
@@ -1456,7 +1452,7 @@ function AdminWorkspace({ profile, preview = false }: { profile: Profile; previe
               }
             : current,
         );
-        setNotice("Sample folder deleted. Preview changes are temporary and won’t be saved.");
+        setNotice("Sample folder deleted from this browser.");
       } else {
         await deletePortalModule({ data: { id: module.id } });
         setNotice("Course folder deleted.");
@@ -1597,7 +1593,7 @@ function AdminWorkspace({ profile, preview = false }: { profile: Profile; previe
             : current,
         );
         setAssignments((current) => ({ ...current, [studentDialog.id]: moduleIds }));
-        setNotice("Sample account updated. Preview changes are temporary and won’t be saved.");
+        setNotice("Sample account updated in this browser.");
       } else {
         await updateStudentPortalAccess({ data: studentUpdate });
         setNotice("Student access updated.");
@@ -1643,7 +1639,7 @@ function AdminWorkspace({ profile, preview = false }: { profile: Profile; previe
             : current,
         );
         setAssignments((current) => ({ ...current, [id]: input.moduleIds }));
-        setNotice("Sample student added. No email was sent; preview changes are temporary.");
+        setNotice("Sample student added in this browser. No email was sent.");
       } else {
         await invitePortalStudent({ data: input });
         setNotice("Student invitation sent.");
@@ -1818,15 +1814,19 @@ function AdminWorkspace({ profile, preview = false }: { profile: Profile; previe
                 icon={<FileText aria-hidden="true" />}
               />
             </div>
-            {!data?.modules.length && (
+            {data && (missingStarterModules.length > 0 || studentsMissingStarterModules) && (
               <section className="admin-empty">
                 <span className="empty-icon">
                   <BookOpen aria-hidden="true" />
                 </span>
-                <h2>Set up your learning modules</h2>
+                <h2>
+                  {missingStarterModules.length
+                    ? "Set up your learning modules"
+                    : "Assign modules to students"}
+                </h2>
                 <p>
-                  Create Induction and Modules 1–6 first. Add the course materials and invite
-                  students when you’re ready.
+                  Add any missing starter folders and make Induction and Modules 1–6 available on
+                  every active student’s dashboard.
                 </p>
                 <button
                   className="brand-button"
@@ -1839,7 +1839,9 @@ function AdminWorkspace({ profile, preview = false }: { profile: Profile; previe
                   ) : (
                     <Plus aria-hidden="true" />
                   )}{" "}
-                  Create Induction + Modules 1–6
+                  {missingStarterModules.length
+                    ? "Add starter modules and assign students"
+                    : "Assign starter modules to students"}
                 </button>
               </section>
             )}
@@ -1953,7 +1955,7 @@ function AdminWorkspace({ profile, preview = false }: { profile: Profile; previe
                   <div>
                     <p className="eyebrow">YOUR COURSE LIBRARY</p>
                     <h2>Choose a module folder</h2>
-                    <p>Open a folder to find and manage its textbooks, videos, and podcasts.</p>
+                    <p>Open a folder to find and manage its learning materials.</p>
                   </div>
                   <label className="search-field">
                     <Search aria-hidden="true" />
@@ -2387,7 +2389,7 @@ function ModuleForm({
           />
           {preview && (
             <p className="form-hint">
-              This is a sample folder. Changes reset if you leave Admin or refresh the preview.
+              This is a sample folder. Changes are saved in this browser.
             </p>
           )}
           {error && (
@@ -2428,7 +2430,7 @@ function InviteStudentForm({
     moduleIds: string[];
   }) => Promise<void>;
 }) {
-  const [moduleIds, setModuleIds] = useState<string[]>([]);
+  const [moduleIds, setModuleIds] = useState<string[]>(() => modules.map((module) => module.id));
   const [error, setError] = useState("");
 
   async function submit(event: FormEvent<HTMLFormElement>) {
@@ -2521,7 +2523,7 @@ function InviteStudentForm({
           <p className="form-hint">
             {preview
               ? "This only adds a sample account to the preview. No email will be sent."
-              : "The student will receive an email invitation to set their password."}
+              : "The student will receive an email invitation to set their password. All current modules are selected by default."}
           </p>
           <div className="form-actions">
             <button className="outline-button" type="button" onClick={onClose} disabled={busy}>
@@ -2584,7 +2586,7 @@ function ContentAdminList({
           <div className="content-admin-copy">
             <span className="module-kicker">
               {modules.find((module) => module.id === item.module_id)?.title ?? "Learning module"} ·{" "}
-              {kindLabel(item.type)}
+              {kindLabel(item.type, item.storage_path)}
             </span>
             <strong>{item.title}</strong>
             <span>{item.description || "No description"}</span>
@@ -2699,7 +2701,10 @@ function ContentForm({
     if (!nextFile) return;
     const detectedKind = detectLearningKind(nextFile.name);
     if (!detectedKind) {
-      setError("Choose a PDF, video (MP4, MOV, M4V, WebM), or audio file (MP3, M4A, WAV).");
+      setFile(null);
+      setError(
+        "Choose a PDF, PowerPoint or Word document, JPG image, video (MP4, MOV, M4V, WebM), or audio file (MP3, M4A, WAV).",
+      );
       return;
     }
     if (nextFile.size > 2 * 1024 * 1024 * 1024) {
@@ -2768,8 +2773,8 @@ function ContentForm({
       onSaved(
         preview
           ? item
-            ? "Sample content changes saved. Preview changes are temporary."
-            : "Sample item added. No file was uploaded; preview changes are temporary."
+            ? "Sample content changes saved in this browser."
+            : "Sample item added in this browser. No file was uploaded."
           : item
             ? "Content changes saved."
             : publish
@@ -2830,14 +2835,14 @@ function ContentForm({
                 id="content-file"
                 className="file-input"
                 type="file"
-                accept=".pdf,.mp4,.mov,.m4v,.webm,.mp3,.m4a,.wav"
+                accept=".pdf,.pptx,.docx,.jpg,.jpeg,.mp4,.mov,.m4v,.webm,.mp3,.m4a,.wav"
                 onChange={(event) => selectFile(event.currentTarget.files?.[0] ?? null)}
                 required
               />
               <p className="form-hint">
                 {preview
                   ? "Choose a sample file to try the form. It will not be uploaded or stored."
-                  : "PDF, MP4, MOV, M4V, WebM, MP3, M4A, or WAV. Files upload privately and can be up to 2 GB."}
+                  : "PDF, PPTX, DOCX, JPG, MP4, MOV, M4V, WebM, MP3, M4A, or WAV. Office documents open as downloads; images are shown in the viewer. Files upload privately and can be up to 2 GB."}
               </p>
             </>
           )}
@@ -2864,7 +2869,7 @@ function ContentForm({
           </select>
           {!item && (
             <p className="form-hint">
-              Detected content type: <strong>{kindLabel(type)}</strong>
+              Detected content type: <strong>{kindLabel(type, file?.name)}</strong>
             </p>
           )}
           <label htmlFor="content-title">Title</label>

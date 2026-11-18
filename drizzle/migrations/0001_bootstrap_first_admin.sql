@@ -12,19 +12,12 @@ CREATE OR REPLACE FUNCTION public.handle_new_learning_user()
 RETURNS TRIGGER LANGUAGE plpgsql SECURITY DEFINER SET search_path = public
 AS $$
 DECLARE assigned_name TEXT;
-DECLARE assigned_role public.app_role;
 BEGIN
   assigned_name := COALESCE(NULLIF(trim(NEW.raw_user_meta_data ->> 'full_name'), ''), split_part(COALESCE(NEW.email, 'Student'), '@', 1));
-  assigned_role := CASE
-    WHEN lower(COALESCE(NEW.email, '')) = 'test@gmail.com'
-      AND NOT EXISTS (SELECT 1 FROM public.user_roles WHERE role = 'admin')
-    THEN 'admin'::public.app_role
-    ELSE 'student'::public.app_role
-  END;
   INSERT INTO public.profiles (id, full_name, student_id, role)
-  VALUES (NEW.id, assigned_name, 'IV-' || upper(substr(replace(NEW.id::text, '-', ''), 1, 8)), assigned_role)
+  VALUES (NEW.id, assigned_name, 'IV-' || upper(substr(replace(NEW.id::text, '-', ''), 1, 8)), 'student')
   ON CONFLICT (id) DO NOTHING;
-  INSERT INTO public.user_roles (user_id, role) VALUES (NEW.id, assigned_role)
+  INSERT INTO public.user_roles (user_id, role) VALUES (NEW.id, 'student')
   ON CONFLICT (user_id, role) DO NOTHING;
   RETURN NEW;
 END;
