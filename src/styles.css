@@ -3158,3 +3158,211 @@
     transition-duration: 0.01ms !important;
   }
 }
+
+/* Role preview switch and refined administration overview */
+.preview-role-switch {
+  justify-content: space-between;
+  min-height: 76px;
+  padding-block: 12px;
+}
+
+.preview-role-label {
+  color: var(--brand-charcoal);
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.preview-role-switch-track {
+  position: relative;
+  isolation: isolate;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(116px, 1fr));
+  gap: 3px;
+  padding: 4px;
+  border: 1px solid oklch(0.88 0.012 255);
+  border-radius: 999px;
+  background: white;
+  box-shadow: 0 3px 10px oklch(0.2 0.025 255 / 7%);
+}
+
+.preview-role-switch-track::before {
+  position: absolute;
+  z-index: -1;
+  inset: 4px auto 4px 4px;
+  width: calc((100% - 11px) / 2);
+  border-radius: 999px;
+  background: var(--brand-charcoal);
+  content: "";
+  transition: transform 220ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.preview-role-switch-track.student-selected::before {
+  transform: translateX(calc(100% + 3px));
+}
+
+.preview-role-switch-track button {
+  position: relative;
+  z-index: 1;
+  min-width: 0;
+  min-height: 42px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 7px 15px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: oklch(0.42 0.025 255);
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.82rem;
+  font-weight: 700;
+  transition: color 180ms ease;
+}
+
+.preview-role-switch-track button.active {
+  color: white;
+}
+
+.preview-role-switch-track button svg {
+  width: 17px;
+  height: 17px;
+}
+
+.preview-role-switch-track button:focus-visible {
+  outline: 2px solid var(--brand-blue);
+  outline-offset: 3px;
+}
+
+.admin-overview {
+  padding-top: 22px;
+}
+
+.admin-welcome-band {
+  position: relative;
+  display: flex;
+  min-height: 150px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  overflow: hidden;
+  margin-bottom: 22px;
+  padding: 25px 30px;
+  border-left: 4px solid var(--brand-orange);
+  background: var(--brand-charcoal);
+  color: white;
+}
+
+.admin-welcome-band .eyebrow {
+  margin: 0 0 8px;
+  color: var(--brand-orange);
+  font-size: 0.69rem;
+}
+
+.admin-welcome-band h2 {
+  margin: 0;
+  color: white;
+  font-size: 1.55rem;
+  line-height: 1.2;
+}
+
+.admin-welcome-band > div > p:last-child {
+  margin: 8px 0 0;
+  color: oklch(0.88 0 0);
+  font-size: 0.84rem;
+  line-height: 1.5;
+}
+
+.admin-welcome-mark {
+  width: 58px;
+  height: 58px;
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  border: 1px solid oklch(1 0 0 / 24%);
+  border-radius: 50%;
+  color: var(--brand-orange);
+}
+
+.admin-welcome-mark svg {
+  width: 25px;
+  height: 25px;
+}
+
+.admin-overview .stat-card {
+  border-color: oklch(0.9 0.012 255);
+  background: white;
+  box-shadow: 0 4px 15px oklch(0.2 0.025 255 / 4%);
+}
+
+.admin-overview .stat-icon {
+  width: 44px;
+  height: 44px;
+  border-radius: 8px;
+}
+
+.admin-overview .stat-card > div > span {
+  font-size: 0.75rem;
+}
+
+.quick-actions > button {
+  border-color: oklch(0.9 0.012 255);
+  transition:
+    border-color 180ms ease,
+    box-shadow 180ms ease,
+    transform 180ms ease;
+}
+
+.quick-actions > button:focus-visible {
+  outline: 2px solid var(--brand-blue);
+  outline-offset: 3px;
+}
+
+@media (max-width: 680px) {
+  .preview-role-switch {
+    min-height: 68px;
+    gap: 8px;
+  }
+
+  .preview-role-switch-track {
+    grid-template-columns: repeat(2, minmax(90px, 1fr));
+  }
+
+  .preview-role-switch-track button {
+    min-height: 40px;
+    gap: 6px;
+    padding-inline: 11px;
+    font-size: 0.78rem;
+  }
+
+  .admin-welcome-band {
+    min-height: 132px;
+    gap: 14px;
+    padding: 21px 18px;
+  }
+
+  .admin-welcome-band h2 {
+    font-size: 1.3rem;
+  }
+
+  .admin-welcome-band > div > p:last-child {
+    max-width: 33ch;
+    font-size: 0.78rem;
+  }
+
+  .admin-welcome-mark {
+    width: 44px;
+    height: 44px;
+  }
+
+  .admin-overview .stat-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .preview-role-switch-track::before {
+    transition: none;
+  }
+}

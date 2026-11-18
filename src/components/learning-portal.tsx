@@ -483,28 +483,36 @@ function LocalPreviewPortal() {
   return (
     <PortalFrame profile={profile} onSignOut={() => undefined} showSignOut={false}>
       <div className="portal-container preview-role-switch">
-        <span>Preview workspace</span>
-        <div role="group" aria-label="Choose preview workspace">
+        <span className="preview-role-label">Preview workspace</span>
+        <div
+          className={`preview-role-switch-track ${previewRole === "student" ? "student-selected" : ""}`}
+          role="group"
+          aria-label="Choose preview workspace"
+        >
           <button
             className={previewRole === "admin" ? "active" : ""}
             type="button"
+            aria-pressed={previewRole === "admin"}
             onClick={() => {
               setPreviewRole("admin");
               setSelectedModule(null);
               setNotice("");
             }}
           >
+            <ShieldCheck aria-hidden="true" />
             Admin
           </button>
           <button
             className={previewRole === "student" ? "active" : ""}
             type="button"
+            aria-pressed={previewRole === "student"}
             onClick={() => {
               setPreviewRole("student");
               setSelectedModule(null);
               setNotice("");
             }}
           >
+            <GraduationCap aria-hidden="true" />
             Student
           </button>
         </div>
@@ -1704,7 +1712,7 @@ function AdminWorkspace({ profile, preview = false }: { profile: Profile; previe
             <p className="eyebrow">IV CONSULTING · ADMIN</p>
             <h1>
               {tab === "overview"
-                ? `Welcome, ${profile.full_name.split(" ")[0]}`
+              ? "Overview"
                 : tab === "content"
                   ? (contentFolder?.title ?? "Course content")
                   : tab === "students"
@@ -1778,6 +1786,16 @@ function AdminWorkspace({ profile, preview = false }: { profile: Profile; previe
         )}
         {!error && !data ? null : tab === "overview" ? (
           <div className="admin-overview">
+            <section className="admin-welcome-band" aria-label="Administration overview">
+              <div>
+                <p className="eyebrow">YOUR WORKSPACE</p>
+                <h2>Welcome back, {profile.full_name.split(" ")[0]}</h2>
+                <p>Course content, student access, and activity—together in one place.</p>
+              </div>
+              <span className="admin-welcome-mark" aria-hidden="true">
+                <LayoutDashboard />
+              </span>
+            </section>
             <div className="stat-grid">
               <StatCard
                 label="Active students"
