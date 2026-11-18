@@ -10,6 +10,10 @@ describe("learning content rules", () => {
     ["lesson.mp3", "audio"],
     ["lesson.m4a", "audio"],
     ["lesson.wav", "audio"],
+    ["report.odt", "pdf"],
+    ["summary.csv", "pdf"],
+    ["slides.odp", "pdf"],
+    ["sheet.ods", "pdf"],
   ] as const)("detects %s as %s", (filename, kind) => {
     expect(detectLearningKind(filename)).toBe(kind);
   });

@@ -226,9 +226,14 @@ function kindLabel(kind: ContentKind, filePath = "") {
   if (kind === "audio") return "Podcast";
   const extension = filePath.split(".").at(-1)?.toLowerCase();
   if (extension === "pptx") return "Presentation";
+  if (extension === "ppt") return "Presentation";
   if (extension === "docx" || extension === "doc") return "Document";
-  if (extension === "xlsx" || extension === "xls") return "Spreadsheet";
-  if (extension === "jpg" || extension === "jpeg" || extension === "png") return "Image";
+  if (extension === "rtf" || extension === "txt") return "Text document";
+  if (extension === "odt") return "Document";
+  if (extension === "xlsx" || extension === "xls" || extension === "ods") return "Spreadsheet";
+  if (extension === "csv") return "Spreadsheet";
+  if (extension === "odp") return "Presentation";
+  if (["jpg", "jpeg", "png", "gif", "webp"].includes(extension ?? "")) return "Image";
   return "Textbook";
 }
 
@@ -630,14 +635,30 @@ function LoginScreen({
       <section className="login-hero">
         <div className="hero-stripe" aria-hidden="true" />
         <div className="portal-container login-hero-inner">
-          <div>
-            <p className="eyebrow">Learn. Grow. Achieve.</p>
+          <div className="login-story">
+            <p className="login-story-kicker">
+              <span /> YOUR PRIVATE LEARNING SPACE
+            </p>
             <h1>
-              Your next step
+              Learn with purpose.
               <br />
-              starts <span>here.</span>
+              Move forward <em>confidently.</em>
             </h1>
-            <p>Welcome to your IV Consulting learning portal. Sign in to continue your training.</p>
+            <p>
+              Access your course, continue your learning, and keep everything you need in one secure
+              place.
+            </p>
+            <div className="login-trust-points">
+              <span>
+                <Check aria-hidden="true" /> Learning materials in one place
+              </span>
+              <span>
+                <Check aria-hidden="true" /> Access from any device
+              </span>
+              <span>
+                <Check aria-hidden="true" /> Secure, personal student access
+              </span>
+            </div>
           </div>
           <div className="login-card">
             <div className="login-card-heading">
@@ -646,9 +667,14 @@ function LoginScreen({
               </span>
               <div>
                 <p className="eyebrow">
-                  {mode === "sign-in" ? "Student & administrator access" : "Account assistance"}
+                  {mode === "sign-in" ? "WELCOME TO IV CONSULTING" : "ACCOUNT ASSISTANCE"}
                 </p>
-                <h2>{mode === "sign-in" ? "Welcome back" : "Reset your password"}</h2>
+                <h2>{mode === "sign-in" ? "Sign in to your portal" : "Reset your password"}</h2>
+                <p className="login-card-subtitle">
+                  {mode === "sign-in"
+                    ? "Enter the details supplied for your student account."
+                    : "We’ll send a secure reset link to your registered email."}
+                </p>
               </div>
             </div>
             <form onSubmit={(event) => void submit(event)}>
@@ -704,9 +730,15 @@ function LoginScreen({
             <p className="privacy-note">
               <ShieldCheck aria-hidden="true" /> Your course access is private and protected.
             </p>
-            <a className="registration-link" href="/register">
-              New student? Complete your registration <ArrowRight aria-hidden="true" />
-            </a>
+            <div className="login-registration-callout">
+              <div>
+                <strong>New to IV Consulting?</strong>
+                <span>Complete the online registration application.</span>
+              </div>
+              <a className="registration-link" href="/register">
+                Register now <ArrowRight aria-hidden="true" />
+              </a>
+            </div>
           </div>
         </div>
       </section>
@@ -714,15 +746,15 @@ function LoginScreen({
         <div>
           <BookOpen aria-hidden="true" />
           <div>
-            <strong>Learn at your pace</strong>
-            <span>Course materials in one secure place.</span>
+            <strong>Designed for your learning journey</strong>
+            <span>Simple navigation, clear materials, real progress.</span>
           </div>
         </div>
         <div>
           <Users aria-hidden="true" />
           <div>
-            <strong>Need access?</strong>
-            <span>Contact your IV Consulting administrator.</span>
+            <strong>Need help getting started?</strong>
+            <span>Our team can help with access and registration.</span>
           </div>
         </div>
         <a href="mailto:inyapavhusiku@gmail.com">
@@ -1597,42 +1629,6 @@ function ModuleWorkspace({
           <BookOpen aria-hidden="true" />
         </div>
       </div>
-      <section className="module-guide" aria-label="How to use this module">
-        <div className="module-guide-intro">
-          <span>
-            <CircleHelp aria-hidden="true" />
-          </span>
-          <div>
-            <strong>Not sure where to begin?</strong>
-            <p>Follow these simple steps. You cannot break or lose anything here.</p>
-          </div>
-        </div>
-        <ol>
-          <li>
-            <span>1</span>
-            <div>
-              <strong>{folders.length ? "Choose a folder" : "Find a material"}</strong>
-              <small>
-                {folders.length ? "Use the large cards below" : "Browse or search below"}
-              </small>
-            </div>
-          </li>
-          <li>
-            <span>2</span>
-            <div>
-              <strong>Open a material</strong>
-              <small>Press the clear Open button</small>
-            </div>
-          </li>
-          <li>
-            <span>3</span>
-            <div>
-              <strong>Come back anytime</strong>
-              <small>Use Back to my modules</small>
-            </div>
-          </li>
-        </ol>
-      </section>
       <div className="materials-toolbar">
         <div className="materials-tabs" aria-label="Filter course materials">
           {categories.map((category) => (
@@ -1734,129 +1730,105 @@ function ModuleWorkspace({
             </div>
           ) : null}
 
-          {!error && visibleFolders.length > 0 ? (
-            <section className="module-folder-section" aria-labelledby="folders-title">
+          {!error && visibleResultCount > 0 ? (
+            <section className="module-browser" aria-labelledby="browser-title">
               <div className="module-section-heading">
                 <div>
-                  <span className="eyebrow">CHOOSE ONE OPTION</span>
-                  <h3 id="folders-title">
-                    {normalizedSearch ? "Folders that match" : "Where would you like to go?"}
+                  <span className="eyebrow">CURRENT LOCATION</span>
+                  <h3 id="browser-title">
+                    {normalizedSearch ? "Search results" : "Folders and files"}
                   </h3>
                 </div>
                 <span>
-                  {visibleFolders.length} {visibleFolders.length === 1 ? "folder" : "folders"}
+                  {visibleFolders.length + visibleItems.length}{" "}
+                  {visibleFolders.length + visibleItems.length === 1 ? "item" : "items"}
                 </span>
               </div>
-              <div className="module-folder-grid">
-                {visibleFolders.map((folder, index) => {
+              <div className="module-browser-grid">
+                {visibleFolders.map((folder) => {
                   const folderItems = itemsInFolder(folder.id);
                   const subfolderCount = sortedFolders.filter(
                     (entry) => entry.parent_folder_id === folder.id,
                   ).length;
                   return (
                     <button
-                      className="module-folder-card"
+                      className="module-browser-item folder"
                       type="button"
                       key={folder.id}
                       onClick={() => openFolder(folder)}
                     >
-                      <span className="module-folder-card-icon">
+                      <span className="module-browser-item-icon">
                         <FolderOpen aria-hidden="true" />
                       </span>
-                      <span className="module-folder-card-copy">
-                        <span className="module-folder-step">
-                          {normalizedSearch ? "Folder" : `Folder ${index + 1}`}
-                        </span>
+                      <span className="module-browser-item-copy">
+                        <small>Folder</small>
+                        <strong>{folder.title}</strong>
                         {normalizedSearch ? (
-                          <span className="module-folder-card-path">
+                          <span className="module-browser-item-path">
                             {folderTrail(folder.parent_folder_id)
                               .map((entry) => entry.title)
                               .join(" / ") || module.title}
                           </span>
-                        ) : null}
-                        <strong>{folder.title}</strong>
-                        <span>
-                          {folder.description || "Open this folder to explore its materials."}
-                        </span>
-                      </span>
-                      <span className="module-folder-card-meta">
-                        <span>
-                          {folderItems.length} {folderItems.length === 1 ? "material" : "materials"}
-                        </span>
-                        {subfolderCount > 0 ? (
+                        ) : (
                           <span>
-                            {subfolderCount}{" "}
-                            {subfolderCount === 1 ? "folder inside" : "folders inside"}
+                            {folder.description || "Open this folder to see its contents."}
                           </span>
-                        ) : null}
-                        <strong>
-                          Open this folder <ArrowRight aria-hidden="true" />
-                        </strong>
+                        )}
+                      </span>
+                      <span className="module-browser-item-footer">
+                        <span>
+                          {folderItems.length} {folderItems.length === 1 ? "file" : "files"}
+                          {subfolderCount
+                            ? ` · ${subfolderCount} ${subfolderCount === 1 ? "folder" : "folders"}`
+                            : ""}
+                        </span>
+                        <ArrowRight aria-hidden="true" />
                       </span>
                     </button>
                   );
                 })}
-              </div>
-            </section>
-          ) : null}
-
-          {!error && visibleItems.length > 0 ? (
-            <section className="module-materials-section" aria-labelledby="materials-title">
-              <div className="module-section-heading">
-                <div>
-                  <span className="eyebrow">
-                    {selectedFolder && !normalizedSearch ? "READY TO OPEN" : "LEARNING MATERIALS"}
-                  </span>
-                  <h3 id="materials-title">
-                    {normalizedSearch ? "Materials that match" : "Choose a material"}
-                  </h3>
-                </div>
-                <span>
-                  {visibleItems.length} {visibleItems.length === 1 ? "item" : "items"}
-                </span>
-              </div>
-              <div className="content-list">
                 {visibleItems.map((item) => {
                   const itemProgress = progressById.get(item.id);
                   const itemFolderTrail = folderTrail(item.folder_id)
                     .map((entry) => entry.title)
                     .join(" / ");
                   return (
-                    <article className="content-row" key={item.id}>
-                      <span className={`content-kind-icon ${item.type}`}>
+                    <button
+                      className="module-browser-item file"
+                      type="button"
+                      key={item.id}
+                      onClick={() => onOpenItem(item)}
+                      disabled={openingContent === item.id}
+                    >
+                      <span className={`module-browser-item-icon ${item.type}`}>
                         {kindIcon(item.type)}
                       </span>
-                      <div className="content-row-copy">
-                        <span className="module-kicker">
-                          {itemFolderTrail ? `${itemFolderTrail} · ` : ""}
-                          {kindLabel(item.type, item.storage_path)}
-                        </span>
-                        <h3>{item.title}</h3>
-                        <p>{item.description || "Open this material to continue learning."}</p>
-                      </div>
-                      <span className={`status-pill ${itemProgress?.status ?? "not_started"}`}>
-                        {itemProgress?.status === "completed"
-                          ? "Completed"
-                          : itemProgress?.status === "in_progress"
-                            ? "In progress"
-                            : "Ready to open"}
+                      <span className="module-browser-item-copy">
+                        <small>{kindLabel(item.type, item.storage_path)}</small>
+                        <strong>{item.title}</strong>
+                        {normalizedSearch && itemFolderTrail ? (
+                          <span className="module-browser-item-path">{itemFolderTrail}</span>
+                        ) : (
+                          <span>
+                            {item.description || "Open this material to continue learning."}
+                          </span>
+                        )}
                       </span>
-                      <button
-                        className="outline-button"
-                        type="button"
-                        onClick={() => onOpenItem(item)}
-                        disabled={openingContent === item.id}
-                      >
+                      <span className="module-browser-item-footer">
+                        <span className={`status-pill ${itemProgress?.status ?? "not_started"}`}>
+                          {itemProgress?.status === "completed"
+                            ? "Completed"
+                            : itemProgress?.status === "in_progress"
+                              ? "In progress"
+                              : "Ready to open"}
+                        </span>
                         {openingContent === item.id ? (
                           <LoaderCircle className="spin" aria-hidden="true" />
                         ) : (
                           <ArrowRight aria-hidden="true" />
                         )}
-                        {openingContent === item.id
-                          ? "Opening"
-                          : `Open ${kindLabel(item.type, item.storage_path).toLowerCase()}`}
-                      </button>
-                    </article>
+                      </span>
+                    </button>
                   );
                 })}
               </div>
@@ -1936,13 +1908,45 @@ function ContentViewer({
   const startAt = savedProgress?.position_seconds ?? 0;
   const fileExtension = item.storage_path.split(".").at(-1)?.toLowerCase();
   const isImage = fileExtension === "jpg" || fileExtension === "jpeg" || fileExtension === "png";
+  const isExtendedImage = isImage || fileExtension === "gif" || fileExtension === "webp";
+  const isTextDocument =
+    fileExtension === "txt" || fileExtension === "csv" || fileExtension === "rtf";
   const isOfficeDocument =
     fileExtension === "pptx" ||
     fileExtension === "docx" ||
     fileExtension === "doc" ||
     fileExtension === "xlsx" ||
-    fileExtension === "xls";
+    fileExtension === "xls" ||
+    fileExtension === "odt" ||
+    fileExtension === "ods" ||
+    fileExtension === "odp" ||
+    fileExtension === "ppt";
+  const isPdf = fileExtension === "pdf";
   const [mediaReady, setMediaReady] = useState(isOfficeDocument);
+  const [textContent, setTextContent] = useState("");
+  const [viewerError, setViewerError] = useState("");
+
+  useEffect(() => {
+    if (!isTextDocument) return;
+    let active = true;
+    setMediaReady(false);
+    void fetch(url)
+      .then(async (response) => {
+        if (!response.ok) throw new Error("The document could not be loaded.");
+        const text = await response.text();
+        if (active) setTextContent(text.slice(0, 1_000_000));
+      })
+      .catch(() => {
+        if (active)
+          setViewerError("This text document could not be previewed. Download it instead.");
+      })
+      .finally(() => {
+        if (active) setMediaReady(true);
+      });
+    return () => {
+      active = false;
+    };
+  }, [isTextDocument, url]);
 
   async function saveProgress(status: "in_progress" | "completed", positionSeconds: number) {
     try {
@@ -1991,7 +1995,7 @@ function ContentViewer({
           </button>
         </header>
         <div className="viewer-content">
-          {item.type === "pdf" && isImage ? (
+          {item.type === "pdf" && isExtendedImage ? (
             <div className="media-wrap document-image-wrap">
               <img
                 src={url}
@@ -2006,16 +2010,45 @@ function ContentViewer({
                 {profile.full_name} · {profile.student_id}
               </div>
             </div>
-          ) : item.type === "pdf" && isOfficeDocument ? (
-            <div className="document-download">
-              <FileText aria-hidden="true" />
-              <p>This {kindLabel(item.type, item.storage_path)} is available as a download.</p>
-              <a className="brand-button" href={url} download>
-                Download {kindLabel(item.type, item.storage_path)}
-                <ArrowRight aria-hidden="true" />
-              </a>
+          ) : item.type === "pdf" && isTextDocument ? (
+            <div className="text-document-wrap">
+              {viewerError ? (
+                <div className="document-read-error">
+                  <CircleHelp aria-hidden="true" />
+                  <p>{viewerError}</p>
+                  <a className="brand-button" href={url} download>
+                    Download document <ArrowRight aria-hidden="true" />
+                  </a>
+                </div>
+              ) : (
+                <pre>{textContent}</pre>
+              )}
             </div>
-          ) : item.type === "pdf" ? (
+          ) : item.type === "pdf" && isOfficeDocument ? (
+            <div className="office-document-card">
+              <span className="office-document-icon">
+                <FileText aria-hidden="true" />
+              </span>
+              <span className="module-kicker">{fileExtension?.toUpperCase()} FILE</span>
+              <h3>{item.title}</h3>
+              <p>
+                This {kindLabel(item.type, item.storage_path).toLowerCase()} keeps its original
+                formatting when opened in your device’s compatible app.
+              </p>
+              <div className="office-document-actions">
+                <a className="brand-button" href={url} target="_blank" rel="noreferrer">
+                  Open in another tab <ArrowRight aria-hidden="true" />
+                </a>
+                <a className="outline-button" href={url} download>
+                  Download file
+                </a>
+              </div>
+              <small>
+                Word and PowerPoint files open in Microsoft Office, LibreOffice, or another
+                compatible app. Spreadsheets open in Excel, Google Sheets, or similar software.
+              </small>
+            </div>
+          ) : item.type === "pdf" && isPdf ? (
             <div className="pdf-wrap">
               <iframe
                 title={item.title}
@@ -2024,6 +2057,23 @@ function ContentViewer({
               />
               <div className="watermark">
                 {profile.full_name} · {profile.student_id}
+              </div>
+            </div>
+          ) : item.type === "pdf" ? (
+            <div className="office-document-card">
+              <span className="office-document-icon">
+                <FileText aria-hidden="true" />
+              </span>
+              <span className="module-kicker">{fileExtension?.toUpperCase() || "FILE"}</span>
+              <h3>{item.title}</h3>
+              <p>This file cannot be previewed here, but it is ready to open securely.</p>
+              <div className="office-document-actions">
+                <a className="brand-button" href={url} target="_blank" rel="noreferrer">
+                  Open file <ArrowRight aria-hidden="true" />
+                </a>
+                <a className="outline-button" href={url} download>
+                  Download file
+                </a>
               </div>
             </div>
           ) : (
@@ -2553,12 +2603,34 @@ function AdminWorkspace({ profile, preview = false }: { profile: Profile; previe
       });
       if (result.status === "approved") {
         setRegistrationLogin(result.login);
+        setRegistrations((current) =>
+          current.map((item) =>
+            item.id === registrationId
+              ? {
+                  ...item,
+                  status: "approved",
+                  review_notes: notes,
+                  reviewed_at: new Date().toISOString(),
+                }
+              : item,
+          ),
+        );
+        setSelectedRegistration((current) =>
+          current?.id === registrationId
+            ? {
+                ...current,
+                status: "approved",
+                review_notes: notes,
+                reviewed_at: new Date().toISOString(),
+              }
+            : current,
+        );
         setNotice("Registration approved and the student account has been created.");
       } else {
         setNotice("Registration rejected and saved for your records.");
         setSelectedRegistration(null);
       }
-      await refresh();
+      void refresh();
     } catch (caught) {
       setDialogError(messageFrom(caught));
       throw caught;
@@ -3433,7 +3505,13 @@ function RegistrationReviewDialog({
   }
 
   return (
-    <div className="viewer-backdrop">
+    <div
+      className="viewer-backdrop registration-review-backdrop"
+      role="presentation"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget && !busy) onClose();
+      }}
+    >
       <section
         className="registration-review-card"
         role="dialog"
@@ -3457,7 +3535,6 @@ function RegistrationReviewDialog({
             type="button"
             onClick={onClose}
             aria-label="Close registration"
-            disabled={busy}
           >
             <X aria-hidden="true" />
           </button>
@@ -4327,14 +4404,14 @@ function ContentForm({
                 id="content-file"
                 className="file-input"
                 type="file"
-                accept=".pdf,.pptx,.docx,.doc,.xlsx,.xls,.jpg,.jpeg,.png,.mp4,.mov,.m4v,.webm,.mp3,.m4a,.wav"
+                accept=".pdf,.ppt,.pptx,.odp,.doc,.docx,.odt,.rtf,.txt,.xls,.xlsx,.ods,.csv,.jpg,.jpeg,.png,.gif,.webp,.mp4,.mov,.m4v,.webm,.mp3,.m4a,.wav"
                 onChange={(event) => selectFile(event.currentTarget.files?.[0] ?? null)}
                 required
               />
               <p className="form-hint">
                 {preview
                   ? "Choose a sample file to try the form. It will not be uploaded or stored."
-                  : "PDF, PPTX, DOCX, DOC, XLSX, XLS, JPG, PNG, MP4, MOV, M4V, WebM, MP3, M4A, or WAV. Office documents open as downloads; images are shown in the viewer. Files upload privately and can be up to 2 GB."}
+                  : "PDF, Office documents, OpenDocument files, text, CSV, images, video, and audio. Documents retain their original formatting when opened or downloaded. Files upload privately and can be up to 2 GB."}
               </p>
             </>
           )}

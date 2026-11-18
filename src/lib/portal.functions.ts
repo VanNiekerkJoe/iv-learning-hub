@@ -420,19 +420,21 @@ export const reviewStudentRegistration = createServerFn({ method: "POST" })
     const studentUuid = authUser.user.id;
     const studentId = `IV-${crypto.randomUUID().replaceAll("-", "").slice(0, 8).toUpperCase()}`;
     try {
-      const { error: profileError } = await supabaseAdmin.from("profiles").insert({
-        id: studentUuid,
-        full_name: `${registration.full_names} ${registration.surname}`.trim(),
-        student_id: studentId,
-        role: "student",
-        active: true,
-      });
+      const { error: profileError } = await supabaseAdmin.from("profiles").upsert(
+        {
+          id: studentUuid,
+          full_name: `${registration.full_names} ${registration.surname}`.trim(),
+          student_id: studentId,
+          role: "student",
+          active: true,
+        },
+        { onConflict: "id" },
+      );
       if (profileError) throw new Error("The student profile could not be created.");
 
-      const { error: roleError } = await supabaseAdmin.from("user_roles").insert({
-        user_id: studentUuid,
-        role: "student",
-      });
+      const { error: roleError } = await supabaseAdmin
+        .from("user_roles")
+        .upsert({ user_id: studentUuid, role: "student" }, { onConflict: "user_id,role" });
       if (roleError) throw new Error("Student access could not be prepared.");
 
       const { data: modules, error: moduleError } = await supabaseAdmin
