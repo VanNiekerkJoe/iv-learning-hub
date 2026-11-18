@@ -53,9 +53,9 @@ export const getLearningDashboard = createServerFn({ method: "GET" })
     if (assignmentError) throw new Error("Your course assignments could not be loaded.");
 
     const moduleIds = (assigned ?? []).map((row) => row.module_id);
-    if (moduleIds.length === 0) return { profile, modules: [], progress: [] };
+    if (moduleIds.length === 0) return { profile, modules: [], folders: [], content: [], progress: [] };
 
-    const [moduleResult, contentResult, progressResult] = await Promise.all([
+    const [moduleResult, contentResult, folderResult, progressResult] = await Promise.all([
       context.supabase
         .from("modules")
         .select("id, title, description, position")
@@ -69,17 +69,23 @@ export const getLearningDashboard = createServerFn({ method: "GET" })
         .is("deleted_at", null)
         .order("position"),
       context.supabase
+        .from("content_folders")
+        .select("id, module_id, parent_folder_id, title, description, position, created_at")
+        .in("module_id", moduleIds)
+        .order("position"),
+      context.supabase
         .from("progress")
         .select("content_id, status, position_seconds, updated_at")
         .eq("student_id", context.userId),
     ]);
 
-    for (const result of [moduleResult, contentResult, progressResult]) {
+    for (const result of [moduleResult, contentResult, folderResult, progressResult]) {
       if (result.error) throw new Error("Your learning dashboard could not be loaded.");
     }
     return {
       profile,
       modules: moduleResult.data ?? [],
+      folders: folderResult.data ?? [],
       content: contentResult.data ?? [],
       progress: progressResult.data ?? [],
     };

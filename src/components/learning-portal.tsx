@@ -303,6 +303,7 @@ export function LearningPortal() {
 
   const profile = dashboard?.profile;
   const modules = dashboard?.modules ?? [];
+  const folders = dashboard?.folders ?? [];
   const content = dashboard?.content ?? [];
   const progress = dashboard?.progress ?? [];
   const profileNeedsTerms = Boolean(profile && !profile.terms_accepted_at);
@@ -321,19 +322,16 @@ export function LearningPortal() {
 
   async function openModule(module: Module) {
     setSelectedModule(module);
-    setModuleContent([]);
-    setModuleFolders([]);
+    setModuleContent(content.filter((item) => item.module_id === module.id));
+    setModuleFolders(folders.filter((folder) => folder.module_id === module.id));
+    setModuleProgress(
+      progress.filter((item) =>
+        content.some((entry) => entry.id === item.content_id && entry.module_id === module.id),
+      ),
+    );
     setModuleSearch("");
     setModuleKind("all");
     setModuleError("");
-    try {
-      const result = await getLearningModule({ data: { moduleId: module.id } });
-      setModuleContent(result.content);
-      setModuleFolders(result.folders);
-      setModuleProgress(result.progress);
-    } catch (error) {
-      setModuleError(messageFrom(error));
-    }
   }
 
   async function openItem(item: ContentItem) {
