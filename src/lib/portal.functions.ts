@@ -4,7 +4,12 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 
 import type { Database } from "@/integrations/supabase/types";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
-import { isRecentlyDeleted, STARTER_MODULES } from "@/lib/learning-domain";
+import {
+  isRecentlyDeleted,
+  readPasswordState,
+  STARTER_MODULES,
+  validateNewPassword,
+} from "@/lib/learning-domain";
 
 type PortalDb = SupabaseClient<Database>;
 
@@ -159,7 +164,17 @@ async function registrationPath(registrationId: string, kind: string, fileName: 
   return `${registrationId}/${kind}.${extension}`;
 }
 
-async function requireActiveProfile(context: PortalContext) {
+const PASSWORD_CHANGE_REQUIRED_MESSAGE = "Please create your own password before continuing.";
+const PASSWORD_RESET_REPEAT_WINDOW_MS = 10 * 60 * 1000;
+
+function generateTemporaryPassword() {
+  return `IV!${crypto.randomUUID().replaceAll("-", "").slice(0, 16)}`;
+}
+
+async function requireActiveProfile(
+  context: PortalContext,
+  options: { allowPasswordChange?: boolean } = {},
+) {
   const { data: profile, error } = await context.supabase
     .from("profiles")
     .select("id, full_name, student_id, role, active, terms_accepted_at")
@@ -169,7 +184,33 @@ async function requireActiveProfile(context: PortalContext) {
   if (error || !profile) throw new Error("Your learning account could not be found.");
   if (!profile.active)
     throw new Error("This account is currently inactive. Contact IV Consulting for help.");
-  return { ...profile, email: context.claims.email ?? "" };
+
+  // The flag is only ever written by server functions with the service role, so no service key
+  // means nothing could have set it.
+  let mustChangePassword = false;
+  let passwordChangedAt: string | null = null;
+  let passwordResetRequestedAt: string | null = null;
+  if (process.env["SUPABASE_SERVICE_ROLE_KEY"]) {
+    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+    const { data: authUser, error: authError } = await supabaseAdmin.auth.admin.getUserById(
+      context.userId,
+    );
+    if (authError || !authUser.user) throw new Error("Your account could not be verified.");
+    const passwordState = readPasswordState(authUser.user.app_metadata);
+    mustChangePassword = passwordState.mustChange;
+    passwordChangedAt = passwordState.changedAt;
+    passwordResetRequestedAt = passwordState.requestedAt;
+  }
+  if (mustChangePassword && !options.allowPasswordChange) {
+    throw new Error(PASSWORD_CHANGE_REQUIRED_MESSAGE);
+  }
+  return {
+    ...profile,
+    email: context.claims.email ?? "",
+    mustChangePassword,
+    passwordChangedAt,
+    passwordResetRequestedAt,
+  };
 }
 
 async function requireAdministrator(userId: string, supabase: PortalDb) {
@@ -402,7 +443,7 @@ export const reviewStudentRegistration = createServerFn({ method: "POST" })
       return { status: "rejected" as const };
     }
 
-    const password = `IV!${crypto.randomUUID().replaceAll("-", "").slice(0, 16)}`;
+    const password = generateTemporaryPassword();
     const { data: authUser, error: createUserError } = await supabaseAdmin.auth.admin.createUser({
       email: registration.email,
       password,
@@ -410,6 +451,7 @@ export const reviewStudentRegistration = createServerFn({ method: "POST" })
       user_metadata: {
         full_name: `${registration.full_names} ${registration.surname}`.trim(),
       },
+      app_metadata: { must_change_password: true },
     });
     if (createUserError || !authUser.user) {
       throw new Error(
@@ -487,12 +529,19 @@ export const reviewStudentRegistration = createServerFn({ method: "POST" })
 
 export const getPortalProfile = createServerFn({ method: "GET" })
   .middleware([requireSupabaseAuth])
-  .handler(async ({ context }) => requireActiveProfile(context as PortalContext));
+  .handler(async ({ context }) =>
+    requireActiveProfile(context as PortalContext, { allowPasswordChange: true }),
+  );
 
 export const getLearningDashboard = createServerFn({ method: "GET" })
   .middleware([requireSupabaseAuth])
   .handler(async ({ context }) => {
-    const profile = await requireActiveProfile(context as PortalContext);
+    const profile = await requireActiveProfile(context as PortalContext, {
+      allowPasswordChange: true,
+    });
+    if (profile.mustChangePassword) {
+      return { profile, modules: [], folders: [], content: [], progress: [] };
+    }
     const { data: assigned, error: assignmentError } = await context.supabase
       .from("student_modules")
       .select("module_id")
@@ -686,6 +735,207 @@ export const acceptCopyrightNotice = createServerFn({ method: "POST" })
     return { accepted: true };
   });
 
+export const updateOwnName = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .validator((input: { fullName: string }) => {
+    const fullName = typeof input?.fullName === "string" ? input.fullName.trim() : "";
+    if (!fullName || fullName.length > 120) {
+      throw new Error("Enter a name between 1 and 120 characters.");
+    }
+    return { fullName };
+  })
+  .handler(async ({ data, context }) => {
+    // Students’ names stay under administrator control because they appear on the content watermark.
+    await requireAdministrator(context.userId, context.supabase as PortalDb);
+    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+    const { error } = await supabaseAdmin
+      .from("profiles")
+      .update({ full_name: data.fullName })
+      .eq("id", context.userId);
+    if (error) throw new Error("Your name could not be saved.");
+    return { saved: true };
+  });
+
+export const requestOwnPasswordReset = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .validator((input: { note?: string }) => {
+    const note = typeof input?.note === "string" ? input.note.trim() : "";
+    if (note.length > 300) throw new Error("Keep your message under 300 characters.");
+    return { note };
+  })
+  .handler(async ({ data, context }) => {
+    const profile = await requireActiveProfile(context as PortalContext);
+    if (profile.role !== "student") {
+      throw new Error("Administrators can change their password in Settings.");
+    }
+    if (profile.passwordResetRequestedAt) return { requestedAt: profile.passwordResetRequestedAt };
+    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+    const { data: authData, error: authError } = await supabaseAdmin.auth.admin.getUserById(
+      context.userId,
+    );
+    if (authError || !authData.user) throw new Error("Your account could not be verified.");
+    const requestedAt = new Date().toISOString();
+    const { error } = await supabaseAdmin.auth.admin.updateUserById(context.userId, {
+      app_metadata: {
+        ...authData.user.app_metadata,
+        password_reset_request: { requested_at: requestedAt, note: data.note },
+      },
+    });
+    if (error) throw new Error("Your request could not be sent. Please try again.");
+    return { requestedAt };
+  });
+
+export const completePasswordSetup = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .validator((input: { password: string }) => {
+    if (typeof input?.password !== "string") throw new Error("Enter a new password.");
+    const problem = validateNewPassword(input.password);
+    if (problem) throw new Error(problem);
+    return { password: input.password };
+  })
+  .handler(async ({ data, context }) => {
+    const profile = await requireActiveProfile(context as PortalContext, {
+      allowPasswordChange: true,
+    });
+    if (!profile.mustChangePassword) {
+      throw new Error(
+        "Your password has already been set. If you have forgotten it, ask IV Consulting to allow a reset.",
+      );
+    }
+    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+    const { error } = await supabaseAdmin.auth.admin.updateUserById(context.userId, {
+      password: data.password,
+      app_metadata: {
+        must_change_password: false,
+        password_reset_request: null,
+        password_changed_at: new Date().toISOString(),
+      },
+    });
+    if (error) {
+      throw new Error(
+        /different|same/i.test(error.message)
+          ? "Choose a password that is different from your temporary password."
+          : "Your new password could not be saved. Please try again.",
+      );
+    }
+    return { updated: true };
+  });
+
+async function findAuthUserByEmail(email: string) {
+  const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+  const perPage = 1000;
+  for (let page = 1; page <= 5; page += 1) {
+    const { data, error } = await supabaseAdmin.auth.admin.listUsers({ page, perPage });
+    if (error) throw error;
+    const match = data.users.find((user) => user.email?.toLowerCase() === email);
+    if (match) return match;
+    if (data.users.length < perPage) break;
+  }
+  return null;
+}
+
+export const requestPasswordReset = createServerFn({ method: "POST" })
+  .validator((input: { email: string; note?: string }) => {
+    const email = typeof input?.email === "string" ? input.email.trim().toLowerCase() : "";
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 180) {
+      throw new Error("Enter the email address you use to sign in.");
+    }
+    const note = typeof input.note === "string" ? input.note.trim() : "";
+    if (note.length > 300) throw new Error("Keep your message under 300 characters.");
+    return { email, note };
+  })
+  .handler(async ({ data }) => {
+    // The answer never reveals whether an account exists for this email.
+    const received = { received: true as const };
+    try {
+      const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+      const user = await findAuthUserByEmail(data.email);
+      if (!user) return received;
+      const { data: profile } = await supabaseAdmin
+        .from("profiles")
+        .select("role, active")
+        .eq("id", user.id)
+        .maybeSingle();
+      if (!profile || profile.role !== "student" || !profile.active) return received;
+
+      const { requestedAt } = readPasswordState(user.app_metadata);
+      if (requestedAt && Date.now() - Date.parse(requestedAt) < PASSWORD_RESET_REPEAT_WINDOW_MS) {
+        return received;
+      }
+      const { error } = await supabaseAdmin.auth.admin.updateUserById(user.id, {
+        app_metadata: {
+          ...user.app_metadata,
+          password_reset_request: { requested_at: new Date().toISOString(), note: data.note },
+        },
+      });
+      if (error) throw error;
+    } catch (error) {
+      console.error("Password reset enquiry failed", error);
+      throw new Error("Your request could not be sent. Please try again or contact IV Consulting.");
+    }
+    return received;
+  });
+
+export const resolvePasswordReset = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .validator((input: { studentId: string; action: "approve" | "decline" }) => {
+    if (
+      typeof input?.studentId !== "string" ||
+      !input.studentId ||
+      !["approve", "decline"].includes(input.action)
+    ) {
+      throw new Error("Choose a student and a valid password reset decision.");
+    }
+    return input;
+  })
+  .handler(async ({ data, context }) => {
+    await requireAdministrator(context.userId, context.supabase as PortalDb);
+    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+    const [{ data: profile }, { data: authData, error: authError }] = await Promise.all([
+      supabaseAdmin
+        .from("profiles")
+        .select("id, full_name, student_id, role")
+        .eq("id", data.studentId)
+        .maybeSingle(),
+      supabaseAdmin.auth.admin.getUserById(data.studentId),
+    ]);
+    if (!profile || authError || !authData.user)
+      throw new Error("That student could not be found.");
+    if (profile.role !== "student") {
+      throw new Error("Passwords can only be reset here for student accounts.");
+    }
+
+    if (data.action === "decline") {
+      const { error } = await supabaseAdmin.auth.admin.updateUserById(profile.id, {
+        app_metadata: { password_reset_request: null },
+      });
+      if (error) throw new Error("The request could not be dismissed.");
+      return { status: "declined" as const };
+    }
+
+    const temporaryPassword = generateTemporaryPassword();
+    const { error } = await supabaseAdmin.auth.admin.updateUserById(profile.id, {
+      password: temporaryPassword,
+      app_metadata: {
+        must_change_password: true,
+        password_reset_request: null,
+        password_reset_by: context.userId,
+        password_reset_at: new Date().toISOString(),
+      },
+    });
+    if (error) throw new Error("A new temporary password could not be created.");
+    return {
+      status: "approved" as const,
+      login: {
+        name: profile.full_name,
+        email: authData.user.email ?? "",
+        studentId: profile.student_id,
+        temporaryPassword,
+        loginPath: "/",
+      },
+    };
+  });
+
 export const listAdminPortalData = createServerFn({ method: "GET" })
   .middleware([requireSupabaseAuth])
   .handler(async ({ context }) => {
@@ -723,7 +973,7 @@ export const listAdminPortalData = createServerFn({ method: "GET" })
     if (profileError || moduleError || itemError || folderError || logError)
       throw new Error("The administration list could not be loaded.");
 
-    const usersById = new Map<string, string>();
+    const usersById = new Map<string, ReturnType<typeof readPasswordState> & { email: string }>();
     if (process.env["SUPABASE_SERVICE_ROLE_KEY"]) {
       const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
       const { data: authUsers, error: authError } = await supabaseAdmin.auth.admin.listUsers({
@@ -731,14 +981,25 @@ export const listAdminPortalData = createServerFn({ method: "GET" })
         perPage: 1000,
       });
       if (authError) throw new Error("Student contact details could not be loaded.");
-      for (const user of authUsers.users) usersById.set(user.id, user.email ?? "");
+      for (const user of authUsers.users) {
+        usersById.set(user.id, {
+          email: user.email ?? "",
+          ...readPasswordState(user.app_metadata),
+        });
+      }
     }
 
     return {
-      profiles: (profiles ?? []).map((profile) => ({
-        ...profile,
-        email: usersById.get(profile.id) ?? "",
-      })),
+      profiles: (profiles ?? []).map((profile) => {
+        const account = usersById.get(profile.id);
+        return {
+          ...profile,
+          email: account?.email ?? "",
+          must_change_password: account?.mustChange ?? false,
+          password_reset_requested_at: account?.requestedAt ?? null,
+          password_reset_note: account?.note ?? "",
+        };
+      }),
       modules: modules ?? [],
       folders: folders ?? [],
       items: items ?? [],
@@ -863,6 +1124,13 @@ export const invitePortalStudent = createServerFn({ method: "POST" })
     );
     if (error || !invitation.user) throw new Error("The student invitation could not be sent.");
     const studentUuid = invitation.user.id;
+    // Invited students arrive without a password, so they set their own on first sign-in.
+    const { error: flagError } = await supabaseAdmin.auth.admin.updateUserById(studentUuid, {
+      app_metadata: { must_change_password: true },
+    });
+    if (flagError) {
+      throw new Error("The invitation was sent, but the first sign-in setup could not be saved.");
+    }
     const { error: profileError } = await supabaseAdmin.from("profiles").upsert({
       id: studentUuid,
       full_name: data.fullName,

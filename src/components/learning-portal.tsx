@@ -1,8 +1,10 @@
 import {
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
+  type CSSProperties,
   type FormEvent,
   type InputHTMLAttributes,
   type ReactNode,
@@ -16,18 +18,22 @@ import {
   ChevronRight,
   CircleHelp,
   Clock3,
+  Eye,
+  EyeOff,
   Folder,
   FolderOpen,
   FileAudio,
   FileText,
   Film,
   GraduationCap,
+  KeyRound,
   LayoutDashboard,
   LoaderCircle,
   LogOut,
   Mail,
   Plus,
   Search,
+  Settings,
   ShieldCheck,
   Trash2,
   Users,
@@ -38,6 +44,7 @@ import {
   acceptCopyrightNotice,
   beginStudentRegistration,
   changePortalContentState,
+  completePasswordSetup,
   completeStudentRegistration,
   deletePortalModule,
   getLearningDashboard,
@@ -47,6 +54,8 @@ import {
   listAdminPortalData,
   listStudentRegistrations,
   permanentlyDeletePortalContent,
+  requestPasswordReset,
+  resolvePasswordReset,
   saveLearningProgress,
   savePortalFolder,
   savePortalModule,
@@ -62,8 +71,25 @@ import {
   isRecentlyDeleted,
   STARTER_MODULES,
   titleFromFilename,
+  validateNewPassword,
 } from "@/lib/learning-domain";
+import { AnimatedNumber, Presence } from "@/components/motion";
+import {
+  AdminSkeleton,
+  CommandPalette,
+  FilterChips,
+  SearchBox,
+  type CommandItem,
+} from "@/components/admin-ux";
 import { supabase } from "@/integrations/supabase/client";
+import { SettingsCard, SettingsPanel, type SettingsAccount } from "@/components/settings";
+import {
+  applyPreferences,
+  DEFAULT_PREFERENCES,
+  normalizePreferences,
+  PREFERENCES_STORAGE_KEY,
+  type PortalPreferences,
+} from "@/lib/preferences";
 import type { Tables } from "@/integrations/supabase/types";
 
 type Dashboard = Awaited<ReturnType<typeof getLearningDashboard>>;
@@ -95,6 +121,24 @@ type ContentDraft = {
 type AuthSession = NonNullable<
   Awaited<ReturnType<typeof supabase.auth.getSession>>["data"]["session"]
 >;
+type LoginDetails = {
+  name: string;
+  email: string;
+  studentId: string;
+  temporaryPassword: string;
+  loginPath: string;
+};
+type AdminTab = "overview" | "registrations" | "content" | "students" | "settings";
+type StudentFilter = "all" | "attention" | "awaiting" | "inactive" | "admins";
+type RegistrationFilter = "all" | "pending" | "approved" | "rejected";
+
+const ADMIN_TABS: AdminTab[] = ["overview", "registrations", "content", "students", "settings"];
+
+function adminTabFromHash(): AdminTab {
+  if (typeof window === "undefined") return "overview";
+  const hash = window.location.hash.replace("#", "");
+  return (ADMIN_TABS as string[]).includes(hash) ? (hash as AdminTab) : "overview";
+}
 
 const PREVIEW_MODULE_ID = "preview-module-1";
 const PREVIEW_MODULES: Module[] = Array.from({ length: 7 }, (_, index) => ({
@@ -221,6 +265,18 @@ function messageFrom(error: unknown) {
   return error instanceof Error ? error.message : "Something went wrong. Please try again.";
 }
 
+function toSettingsAccount(profile: Profile): SettingsAccount {
+  return {
+    fullName: profile.full_name,
+    email: profile.email,
+    studentId: profile.student_id,
+    role: profile.role === "admin" ? "admin" : "student",
+    termsAcceptedAt: profile.terms_accepted_at,
+    passwordChangedAt: profile.passwordChangedAt,
+    passwordResetRequestedAt: profile.passwordResetRequestedAt,
+  };
+}
+
 function kindLabel(kind: ContentKind, filePath = "") {
   if (kind === "video") return "Video";
   if (kind === "audio") return "Podcast";
@@ -264,7 +320,75 @@ export function LearningPortal() {
   const [savingTerms, setSavingTerms] = useState(false);
   const [pageNotice, setPageNotice] = useState("");
   const userId = session?.user.id;
+  const selectedModuleId = selectedModule?.id;
+  const [preferences, setPreferences] = useState<PortalPreferences>(DEFAULT_PREFERENCES);
+  const [settingsOpen, setSettingsOpen] = useState(false);
 
+  useEffect(() => {
+    window.scrollTo({ top: 0 });
+  }, [selectedModuleId, settingsOpen]);
+
+  useEffect(() => {
+    const syncFromAddress = () => setSettingsOpen(window.location.hash === "#settings");
+    syncFromAddress();
+    window.addEventListener("hashchange", syncFromAddress);
+    window.addEventListener("popstate", syncFromAddress);
+    return () => {
+      window.removeEventListener("hashchange", syncFromAddress);
+      window.removeEventListener("popstate", syncFromAddress);
+    };
+  }, []);
+
+  // This device's saved choices apply straight away; the account copy takes over after sign-in.
+  useEffect(() => {
+    try {
+      setPreferences(
+        normalizePreferences(
+          JSON.parse(window.localStorage.getItem(PREFERENCES_STORAGE_KEY) ?? "null"),
+        ),
+      );
+    } catch {
+      setPreferences(DEFAULT_PREFERENCES);
+    }
+  }, []);
+
+  useEffect(() => {
+    const synced = session?.user.user_metadata?.["portal_preferences"];
+    if (synced) setPreferences(normalizePreferences(synced));
+  }, [userId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    applyPreferences(preferences, document.documentElement);
+  }, [preferences]);
+
+  function updatePreferences(next: PortalPreferences) {
+    setPreferences(next);
+    try {
+      window.localStorage.setItem(PREFERENCES_STORAGE_KEY, JSON.stringify(next));
+    } catch {
+      // Private browsing can block storage; the account copy below still applies.
+    }
+    if (!session) return;
+    void supabase.auth.updateUser({ data: { portal_preferences: next } }).then(({ error }) => {
+      if (error) setPageNotice("Saved on this device only. It couldn’t be saved to your account.");
+    });
+  }
+
+  function openSettings() {
+    window.location.hash = "settings";
+  }
+
+  function closeSettings() {
+    window.history.pushState(null, "", window.location.pathname + window.location.search);
+    setSettingsOpen(false);
+  }
+
+  async function signOutEverywhere() {
+    const { error } = await supabase.auth.signOut({ scope: "global" });
+    if (error) throw error;
+    if (window.location.hash === "#settings") closeSettings();
+    setSession(null);
+  }
   useEffect(() => {
     let active = true;
     const { data: listener } = supabase.auth.onAuthStateChange((_event, nextSession) => {
@@ -409,6 +533,7 @@ export function LearningPortal() {
     if (error) {
       setPageNotice(error.message);
     } else {
+      if (window.location.hash === "#settings") closeSettings();
       setSession(null);
     }
   }
@@ -445,8 +570,21 @@ export function LearningPortal() {
   if (!profile) return <LoadingScreen label="Loading your account" />;
 
   return (
-    <PortalFrame profile={profile} onSignOut={signOut}>
-      {profileNeedsTerms ? (
+    <PortalFrame
+      profile={profile}
+      onSignOut={signOut}
+      onOpenSettings={profile.mustChangePassword || profileNeedsTerms ? undefined : openSettings}
+    >
+      {profile.mustChangePassword ? (
+        <PasswordSetupScreen
+          onRefreshSession={async () => {
+            const { data, error } = await supabase.auth.refreshSession();
+            if (error || !data.session) throw error ?? new Error("Please sign in again.");
+            setSession(data.session);
+          }}
+          onDone={() => loadDashboard()}
+        />
+      ) : profileNeedsTerms ? (
         <section className="terms-card" aria-labelledby="terms-title">
           <div className="message-icon">
             <ShieldCheck aria-hidden="true" />
@@ -479,7 +617,30 @@ export function LearningPortal() {
           </div>
         </section>
       ) : profile.role === "admin" ? (
-        <AdminWorkspace profile={profile} />
+        <AdminWorkspace
+          profile={profile}
+          preferences={preferences}
+          onPreferencesChange={updatePreferences}
+          onAccountChanged={loadDashboard}
+          onSignOutEverywhere={signOutEverywhere}
+        />
+      ) : settingsOpen ? (
+        <section className="portal-container module-page settings-page">
+          <button className="back-link" type="button" onClick={closeSettings}>
+            <ArrowLeft aria-hidden="true" /> Back to my modules
+          </button>
+          <div className="settings-heading">
+            <p className="eyebrow">YOUR ACCOUNT</p>
+            <h1>Settings</h1>
+          </div>
+          <SettingsPanel
+            account={toSettingsAccount(profile)}
+            preferences={preferences}
+            onPreferencesChange={updatePreferences}
+            onAccountChanged={loadDashboard}
+            onSignOutEverywhere={signOutEverywhere}
+          />
+        </section>
       ) : selectedModule ? (
         <ModuleWorkspace
           module={selectedModule}
@@ -508,26 +669,149 @@ export function LearningPortal() {
           }}
         />
       )}
-      {pageNotice && !profileNeedsTerms && (
-        <p className="portal-toast" role="status">
-          {pageNotice}
-          <button type="button" aria-label="Dismiss message" onClick={() => setPageNotice("")}>
-            <X aria-hidden="true" />
-          </button>
-        </p>
-      )}
-      {viewer && (
-        <ContentViewer
-          key={viewer.item.id}
-          item={viewer.item}
-          url={viewer.url}
-          profile={profile}
-          progress={progress}
-          onClose={() => setViewer(null)}
-          onNotice={setPageNotice}
-        />
-      )}
+      <Presence>
+        {pageNotice && !profileNeedsTerms && (
+          <p className="portal-toast" role="status">
+            {pageNotice}
+            <button type="button" aria-label="Dismiss message" onClick={() => setPageNotice("")}>
+              <X aria-hidden="true" />
+            </button>
+          </p>
+        )}
+      </Presence>
+      <Presence>
+        {viewer && (
+          <ContentViewer
+            key={viewer.item.id}
+            item={viewer.item}
+            url={viewer.url}
+            profile={profile}
+            progress={progress}
+            onClose={() => setViewer(null)}
+            onNotice={setPageNotice}
+          />
+        )}
+      </Presence>
     </PortalFrame>
+  );
+}
+
+function PasswordSetupScreen({
+  onRefreshSession,
+  onDone,
+}: {
+  onRefreshSession: () => Promise<void>;
+  onDone: () => Promise<void>;
+}) {
+  const [password, setPassword] = useState("");
+  const [confirmation, setConfirmation] = useState("");
+  const [visible, setVisible] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const problem = validateNewPassword(password);
+  const matches = password.length > 0 && password === confirmation;
+  const checks = [
+    { label: "At least 10 characters", met: password.length >= 10 },
+    { label: "A letter and a number", met: /[A-Za-z]/.test(password) && /\d/.test(password) },
+    { label: "Both passwords match", met: matches },
+  ];
+
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (problem || !matches) return;
+    setBusy(true);
+    setError("");
+    try {
+      try {
+        await completePasswordSetup({ data: { password } });
+      } catch (caught) {
+        if (!messageFrom(caught).toLowerCase().includes("unauthorized")) throw caught;
+        await onRefreshSession();
+        await completePasswordSetup({ data: { password } });
+      }
+      // A refreshed session carries the cleared flag; a failure here is recovered on the next load.
+      await onRefreshSession().catch(() => undefined);
+      await onDone();
+    } catch (caught) {
+      setError(messageFrom(caught));
+      setBusy(false);
+    }
+  }
+
+  return (
+    <section className="terms-card password-setup" aria-labelledby="password-setup-title">
+      <div className="message-icon">
+        <KeyRound aria-hidden="true" />
+      </div>
+      <div>
+        <p className="eyebrow">FIRST SIGN-IN</p>
+        <h1 id="password-setup-title">Create your own password</h1>
+        <p>
+          The temporary password you were given only works to get you in. Choose a personal password
+          that only you know. You won’t be asked to do this again unless an administrator allows a
+          reset.
+        </p>
+        <form className="password-setup-form" onSubmit={(event) => void submit(event)}>
+          <label htmlFor="new-password">New password</label>
+          <div className="password-field">
+            <input
+              id="new-password"
+              className="portal-input"
+              type={visible ? "text" : "password"}
+              autoComplete="new-password"
+              autoCapitalize="none"
+              value={password}
+              onChange={(event) => setPassword(event.target.value)}
+              required
+            />
+            <button
+              className="password-toggle"
+              type="button"
+              onClick={() => setVisible((current) => !current)}
+              aria-label={visible ? "Hide passwords" : "Show passwords"}
+              aria-pressed={visible}
+            >
+              {visible ? <EyeOff aria-hidden="true" /> : <Eye aria-hidden="true" />}
+            </button>
+          </div>
+          <label htmlFor="confirm-password">Confirm new password</label>
+          <input
+            id="confirm-password"
+            className="portal-input"
+            type={visible ? "text" : "password"}
+            autoComplete="new-password"
+            autoCapitalize="none"
+            value={confirmation}
+            onChange={(event) => setConfirmation(event.target.value)}
+            required
+          />
+          <ul className="password-checks" aria-label="Password requirements">
+            {checks.map((check) => (
+              <li key={check.label} className={check.met ? "met" : ""}>
+                <Check aria-hidden="true" /> {check.label}
+              </li>
+            ))}
+          </ul>
+          {error && (
+            <p className="inline-error" role="alert">
+              {error}
+            </p>
+          )}
+          <button
+            className="brand-button"
+            type="submit"
+            disabled={busy || Boolean(problem) || !matches}
+          >
+            {busy ? (
+              <LoaderCircle className="spin" aria-hidden="true" />
+            ) : (
+              <Check aria-hidden="true" />
+            )}
+            Save password and continue
+          </button>
+        </form>
+      </div>
+    </section>
   );
 }
 
@@ -544,12 +828,30 @@ function LoadingScreen({ label }: { label: string }) {
 function PortalFrame({
   profile,
   onSignOut,
+  onOpenSettings,
   children,
 }: {
   profile: Profile | null;
   onSignOut: () => void;
+  onOpenSettings?: (() => void) | undefined;
   children: ReactNode;
 }) {
+  // Escape closes the topmost dialog by pressing its own close button, so each dialog's
+  // cleanup (and its disabled-while-saving state) stays in one place.
+  useEffect(() => {
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key !== "Escape" || event.defaultPrevented) return;
+      const dialogs = document.querySelectorAll<HTMLElement>(
+        ".presence:not([data-closing]) [role='dialog']",
+      );
+      dialogs[dialogs.length - 1]
+        ?.querySelector<HTMLButtonElement>(".viewer-header .icon-button")
+        ?.click();
+    }
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, []);
+
   return (
     <div className="portal-shell">
       <div className="utility-bar">
@@ -579,6 +881,17 @@ function PortalFrame({
             {profile && (
               <>
                 <span className="account-name">{profile.full_name}</span>
+                {onOpenSettings && (
+                  <button
+                    className="icon-button"
+                    type="button"
+                    onClick={onOpenSettings}
+                    aria-label="Settings"
+                  >
+                    <Settings aria-hidden="true" />
+                    <span>Settings</span>
+                  </button>
+                )}
                 <button
                   className="icon-button"
                   type="button"
@@ -627,6 +940,8 @@ function LoginScreen({
   const [mode, setMode] = useState<"sign-in" | "recovery">("sign-in");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [message, setMessage] = useState("");
+  const [requestSent, setRequestSent] = useState(false);
   const [busy, setBusy] = useState(false);
 
   async function submit(event: FormEvent<HTMLFormElement>) {
@@ -635,11 +950,8 @@ function LoginScreen({
     setNotice("");
     try {
       if (mode === "recovery") {
-        const { error } = await supabase.auth.resetPasswordForEmail(email.trim(), {
-          redirectTo: `${window.location.origin}/`,
-        });
-        if (error) throw error;
-        setNotice("If an account exists for that email, a password reset link is on its way.");
+        await requestPasswordReset({ data: { email: email.trim(), note: message } });
+        setRequestSent(true);
       } else {
         const { data, error } = await supabase.auth.signInWithPassword({
           email: email.trim(),
@@ -687,7 +999,7 @@ function LoginScreen({
             </div>
           </div>
           <div className="login-card">
-            <div className="login-card-heading">
+            <div className="login-card-heading" key={`heading-${mode}`}>
               <span className="login-icon">
                 <GraduationCap aria-hidden="true" />
               </span>
@@ -695,59 +1007,92 @@ function LoginScreen({
                 <p className="eyebrow">
                   {mode === "sign-in" ? "WELCOME TO IV CONSULTING" : "ACCOUNT ASSISTANCE"}
                 </p>
-                <h2>{mode === "sign-in" ? "Sign in to your portal" : "Reset your password"}</h2>
+                <h2>{mode === "sign-in" ? "Sign in to your portal" : "Forgot your password?"}</h2>
                 <p className="login-card-subtitle">
                   {mode === "sign-in"
                     ? "Enter the details supplied for your student account."
-                    : "We’ll send a secure reset link to your registered email."}
+                    : "Let IV Consulting know. An administrator will approve a reset and give you a new temporary password."}
                 </p>
               </div>
             </div>
-            <form onSubmit={(event) => void submit(event)}>
-              <label htmlFor="login-email">Email address</label>
-              <div className="input-with-icon">
-                <Mail aria-hidden="true" />
-                <input
-                  id="login-email"
-                  type="email"
-                  autoComplete="email"
-                  value={email}
-                  onChange={(event) => setEmail(event.target.value)}
-                  required
-                  placeholder="you@example.com"
-                />
-              </div>
-              {mode === "sign-in" && (
-                <>
-                  <label htmlFor="login-password">Password</label>
-                  <input
-                    id="login-password"
-                    className="portal-input"
-                    type="password"
-                    autoComplete="current-password"
-                    value={password}
-                    onChange={(event) => setPassword(event.target.value)}
-                    required
-                    placeholder="Enter your password"
-                  />
-                </>
-              )}
-              {notice && (
-                <p className="inline-error" role="status">
-                  {notice}
+            {mode === "recovery" && requestSent ? (
+              <div className="reset-request-sent" role="status" key="request-sent">
+                <span className="message-icon">
+                  <Check aria-hidden="true" />
+                </span>
+                <h3>Request sent</h3>
+                <p>
+                  If that email belongs to a student account, the IV Consulting team has been
+                  notified. Once an administrator approves it, they’ll send you a new temporary
+                  password. You’ll create your own password when you next sign in.
                 </p>
-              )}
-              <button className="brand-button login-submit" type="submit" disabled={busy}>
-                {busy ? <LoaderCircle className="spin" aria-hidden="true" /> : null}
-                {mode === "sign-in" ? "Sign in securely" : "Send reset link"}
-                {!busy && <ArrowRight aria-hidden="true" />}
-              </button>
-            </form>
+              </div>
+            ) : (
+              <form key={`form-${mode}`} onSubmit={(event) => void submit(event)}>
+                <label htmlFor="login-email">Email address</label>
+                <div className="input-with-icon">
+                  <Mail aria-hidden="true" />
+                  <input
+                    id="login-email"
+                    type="email"
+                    autoComplete="email"
+                    inputMode="email"
+                    autoCapitalize="none"
+                    spellCheck={false}
+                    value={email}
+                    onChange={(event) => setEmail(event.target.value)}
+                    required
+                    placeholder="you@example.com"
+                  />
+                </div>
+                {mode === "sign-in" ? (
+                  <>
+                    <label htmlFor="login-password">Password</label>
+                    <input
+                      id="login-password"
+                      className="portal-input"
+                      type="password"
+                      autoComplete="current-password"
+                      autoCapitalize="none"
+                      value={password}
+                      onChange={(event) => setPassword(event.target.value)}
+                      required
+                      placeholder="Enter your password"
+                    />
+                  </>
+                ) : (
+                  <>
+                    <label htmlFor="reset-message">
+                      Message for the administrator <span>(optional)</span>
+                    </label>
+                    <textarea
+                      id="reset-message"
+                      className="portal-input form-textarea"
+                      maxLength={300}
+                      value={message}
+                      onChange={(event) => setMessage(event.target.value)}
+                      placeholder="For example: I changed phones and lost my password."
+                    />
+                  </>
+                )}
+                {notice && (
+                  <p className="inline-error" role="status">
+                    {notice}
+                  </p>
+                )}
+                <button className="brand-button login-submit" type="submit" disabled={busy}>
+                  {busy ? <LoaderCircle className="spin" aria-hidden="true" /> : null}
+                  {mode === "sign-in" ? "Sign in securely" : "Send reset request"}
+                  {!busy && <ArrowRight aria-hidden="true" />}
+                </button>
+              </form>
+            )}
             <button
               className="text-button recovery-link"
               type="button"
               onClick={() => {
                 setNotice("");
+                setRequestSent(false);
                 setMode(mode === "sign-in" ? "recovery" : "sign-in");
               }}
             >
@@ -905,6 +1250,7 @@ export function StudentRegistrationPage() {
             </p>
             <p>
               Once approved, your student account details and sign-in link will be provided to you.
+              The first time you sign in, you’ll be asked to create your own password.
             </p>
             <a className="brand-button" href="/">
               Return to sign in <ArrowRight aria-hidden="true" />
@@ -1051,12 +1397,14 @@ export function StudentRegistrationPage() {
                     label="Postal code"
                     name="postalCode"
                     autoComplete="postal-code"
+                    inputMode="numeric"
                   />
                   <RegistrationField
                     label="Email address"
                     name="email"
                     type="email"
                     autoComplete="email"
+                    autoCapitalize="none"
                     wide
                   />
                 </div>
@@ -1371,12 +1719,12 @@ function StudentDashboard({
             aria-valuenow={overallProgress}
             aria-valuemin={0}
             aria-valuemax={100}
-            style={{
-              background: `conic-gradient(var(--brand-orange) ${overallProgress}%, oklch(1 0 0 / 16%) 0)`,
-            }}
+            style={{ "--progress": `${overallProgress}%` } as CSSProperties}
           >
             <div>
-              <strong>{overallProgress}%</strong>
+              <strong>
+                <AnimatedNumber value={overallProgress} suffix="%" />
+              </strong>
               <span>COMPLETE</span>
             </div>
           </div>
@@ -1470,7 +1818,9 @@ function StudentDashboard({
                   </p>
                   <div className="module-progress-label">
                     <span>Your progress</span>
-                    <strong>{percentage}%</strong>
+                    <strong>
+                      <AnimatedNumber value={percentage} suffix="%" />
+                    </strong>
                   </div>
                   <div
                     className="progress-track"
@@ -1502,7 +1852,9 @@ function StudentDashboard({
             <LayoutDashboard aria-hidden="true" />
           </span>
           <div>
-            <strong>{modules.length}</strong>
+            <strong>
+              <AnimatedNumber value={modules.length} />
+            </strong>
             <span>assigned modules</span>
           </div>
         </div>
@@ -1511,7 +1863,9 @@ function StudentDashboard({
             <Check aria-hidden="true" />
           </span>
           <div>
-            <strong>{completed}</strong>
+            <strong>
+              <AnimatedNumber value={completed} />
+            </strong>
             <span>items completed</span>
           </div>
         </div>
@@ -2170,7 +2524,21 @@ function ContentViewer({
   );
 }
 
-function AdminWorkspace({ profile, preview = false }: { profile: Profile; preview?: boolean }) {
+function AdminWorkspace({
+  profile,
+  preview = false,
+  preferences,
+  onPreferencesChange,
+  onAccountChanged,
+  onSignOutEverywhere,
+}: {
+  profile: Profile;
+  preview?: boolean;
+  preferences: PortalPreferences;
+  onPreferencesChange: (next: PortalPreferences) => void;
+  onAccountChanged: () => Promise<void>;
+  onSignOutEverywhere: () => Promise<void>;
+}) {
   const [data, setData] = useState<AdminData | null>(() => {
     if (!preview) return null;
     return loadPreviewState()?.data ?? PREVIEW_ADMIN_DATA;
@@ -2182,9 +2550,12 @@ function AdminWorkspace({ profile, preview = false }: { profile: Profile; previe
   const [error, setError] = useState("");
   const [retryableError, setRetryableError] = useState(false);
   const [loading, setLoading] = useState(!preview);
-  const [tab, setTab] = useState<
-    "overview" | "registrations" | "content" | "students" | "activity"
-  >("overview");
+  const [tab, setTabState] = useState<AdminTab>("overview");
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  const [studentQuery, setStudentQuery] = useState("");
+  const [studentFilter, setStudentFilter] = useState<StudentFilter>("all");
+  const [registrationQuery, setRegistrationQuery] = useState("");
+  const [registrationFilter, setRegistrationFilter] = useState<RegistrationFilter>("all");
   const [registrations, setRegistrations] = useState<RegistrationData[]>([]);
   const [selectedRegistration, setSelectedRegistration] = useState<RegistrationData | null>(null);
   const [registrationLogin, setRegistrationLogin] = useState<{
@@ -2203,6 +2574,8 @@ function AdminWorkspace({ profile, preview = false }: { profile: Profile; previe
   const [search, setSearch] = useState("");
   const [includeDeleted, setIncludeDeleted] = useState(false);
   const [studentDialog, setStudentDialog] = useState<AdminProfile | null>(null);
+  const [passwordDialog, setPasswordDialog] = useState<AdminProfile | null>(null);
+  const [passwordLogin, setPasswordLogin] = useState<LoginDetails | null>(null);
   const [inviteOpen, setInviteOpen] = useState(false);
   const [dialogError, setDialogError] = useState("");
   const [moduleFormOpen, setModuleFormOpen] = useState(false);
@@ -2210,6 +2583,12 @@ function AdminWorkspace({ profile, preview = false }: { profile: Profile; previe
   const [folderFormOpen, setFolderFormOpen] = useState(false);
   const [folderEditing, setFolderEditing] = useState<AdminFolder | null>(null);
   const contentFolder = data?.modules.find((module) => module.id === contentFolderId) ?? null;
+  const resetRequestCount = (data?.profiles ?? []).filter(
+    (person) => person.password_reset_requested_at && person.role === "student",
+  ).length;
+  const pendingRegistrationCount = registrations.filter(
+    (registration) => registration.status === "pending",
+  ).length;
   const contentSubfolder = data?.folders.find((folder) => folder.id === contentSubfolderId) ?? null;
   const missingStarterModules = STARTER_MODULES.filter(
     (starter) => !data?.modules.some((module) => module.title === starter.title),
@@ -2290,6 +2669,165 @@ function AdminWorkspace({ profile, preview = false }: { profile: Profile; previe
   useEffect(() => {
     void refresh();
   }, [refresh]);
+
+  const setTab = useCallback((next: AdminTab) => {
+    setTabState(next);
+    if (adminTabFromHash() !== next) window.history.pushState(null, "", `#${next}`);
+  }, []);
+
+  const goToTab = useCallback(
+    (id: AdminTab) => {
+      setTab(id);
+      setError("");
+      setRetryableError(false);
+      setNotice("");
+      if (id === "content") {
+        setContentFolderId(null);
+        setContentSubfolderId(null);
+        setSearch("");
+      }
+    },
+    [setTab],
+  );
+
+  // Keep the section in the address bar so refresh and the back button return to it.
+  useEffect(() => {
+    const syncFromAddress = () => setTabState(adminTabFromHash());
+    syncFromAddress();
+    window.addEventListener("popstate", syncFromAddress);
+    window.addEventListener("hashchange", syncFromAddress);
+    return () => {
+      window.removeEventListener("popstate", syncFromAddress);
+      window.removeEventListener("hashchange", syncFromAddress);
+    };
+  }, []);
+
+  useEffect(() => {
+    function onKeyDown(event: KeyboardEvent) {
+      if (!(event.ctrlKey || event.metaKey) || event.key.toLowerCase() !== "k") return;
+      event.preventDefault();
+      if (document.querySelector(".viewer-backdrop:not(.command-backdrop)")) return;
+      setPaletteOpen((open) => !open);
+    }
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, []);
+
+  useEffect(() => {
+    if (!notice) return;
+    const timer = window.setTimeout(() => setNotice(""), 8000);
+    return () => window.clearTimeout(timer);
+  }, [notice]);
+
+  const commandItems = useMemo<CommandItem[]>(() => {
+    const items: CommandItem[] = [
+      {
+        id: "go-overview",
+        group: "Go to",
+        label: "Overview",
+        icon: <LayoutDashboard />,
+        run: () => goToTab("overview"),
+      },
+      {
+        id: "go-registrations",
+        group: "Go to",
+        label: "Student registrations",
+        hint: "Review applications",
+        icon: <FileText />,
+        keywords: "applications",
+        run: () => goToTab("registrations"),
+      },
+      {
+        id: "go-content",
+        group: "Go to",
+        label: "Course content",
+        hint: "Modules, folders and materials",
+        icon: <BookOpen />,
+        keywords: "modules folders files",
+        run: () => goToTab("content"),
+      },
+      {
+        id: "go-students",
+        group: "Go to",
+        label: "People & access",
+        hint: "Students and administrators",
+        icon: <Users />,
+        keywords: "students accounts passwords",
+        run: () => goToTab("students"),
+      },
+      {
+        id: "go-settings",
+        group: "Go to",
+        label: "Settings",
+        hint: "Profile, password and display",
+        icon: <Settings />,
+        keywords: "account password profile preferences",
+        run: () => goToTab("settings"),
+      },
+      {
+        id: "act-invite",
+        group: "Actions",
+        label: "Invite a student",
+        icon: <Plus />,
+        run: () => {
+          goToTab("students");
+          setDialogError("");
+          setInviteOpen(true);
+        },
+      },
+      {
+        id: "act-folder",
+        group: "Actions",
+        label: "Add a module folder",
+        icon: <Plus />,
+        run: () => {
+          goToTab("content");
+          setModuleEditing(null);
+          setModuleFormOpen(true);
+        },
+      },
+    ];
+    for (const person of data?.profiles ?? []) {
+      items.push({
+        id: `person-${person.id}`,
+        group: "Find a person",
+        label: person.full_name,
+        hint: `${person.email || "No email"} · ${person.student_id}`,
+        icon: <Users />,
+        run: () => {
+          goToTab("students");
+          setStudentDialog(person);
+        },
+      });
+    }
+    for (const registration of registrations) {
+      items.push({
+        id: `registration-${registration.id}`,
+        group: "Find a registration",
+        label: `${registration.full_names} ${registration.surname}`,
+        hint: `${registration.email} · ${registration.status}`,
+        icon: <FileText />,
+        run: () => {
+          goToTab("registrations");
+          setRegistrationLogin(null);
+          setSelectedRegistration(registration);
+        },
+      });
+    }
+    for (const module of data?.modules ?? []) {
+      items.push({
+        id: `module-${module.id}`,
+        group: "Find a module",
+        label: module.title,
+        icon: <BookOpen />,
+        run: () => {
+          goToTab("content");
+          setContentFolderId(module.id);
+        },
+      });
+    }
+    return items;
+  }, [data, registrations, goToTab]);
 
   useEffect(() => {
     if (!preview || !data || typeof window === "undefined") return;
@@ -2592,6 +3130,9 @@ function AdminWorkspace({ profile, preview = false }: { profile: Profile; previe
                     active: true,
                     created_at: new Date().toISOString(),
                     terms_accepted_at: null,
+                    must_change_password: false,
+                    password_reset_requested_at: null,
+                    password_reset_note: "",
                     email: input.email,
                   },
                   ...current.profiles,
@@ -2610,6 +3151,64 @@ function AdminWorkspace({ profile, preview = false }: { profile: Profile; previe
     } catch (caught) {
       setDialogError(messageFrom(caught));
       throw caught;
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function decidePasswordReset(action: "approve" | "decline") {
+    if (!passwordDialog) return;
+    const student = passwordDialog;
+    setBusy(true);
+    setDialogError("");
+    try {
+      if (preview) {
+        setData((current) =>
+          current
+            ? {
+                ...current,
+                profiles: current.profiles.map((person) =>
+                  person.id === student.id
+                    ? {
+                        ...person,
+                        password_reset_requested_at: null,
+                        password_reset_note: "",
+                        must_change_password: action === "approve" || person.must_change_password,
+                      }
+                    : person,
+                ),
+              }
+            : current,
+        );
+        if (action === "approve") {
+          setPasswordLogin({
+            name: student.full_name,
+            email: student.email,
+            studentId: student.student_id,
+            temporaryPassword: `IV!${crypto.randomUUID().replaceAll("-", "").slice(0, 16)}`,
+            loginPath: "/",
+          });
+        } else {
+          setPasswordDialog(null);
+        }
+        setNotice(
+          action === "approve"
+            ? "Sample password reset created in this browser."
+            : "Sample reset request dismissed.",
+        );
+        return;
+      }
+      const result = await resolvePasswordReset({ data: { studentId: student.id, action } });
+      if (result.status === "approved") {
+        setPasswordLogin(result.login);
+        setNotice(`A new temporary password was created for ${student.full_name}.`);
+      } else {
+        setPasswordDialog(null);
+        setNotice("Reset request dismissed.");
+      }
+      await refresh();
+    } catch (caught) {
+      setDialogError(messageFrom(caught));
     } finally {
       setBusy(false);
     }
@@ -2665,54 +3264,138 @@ function AdminWorkspace({ profile, preview = false }: { profile: Profile; previe
     }
   }
 
-  if (loading && !data)
-    return (
-      <section className="portal-container admin-loading">
-        <LoaderCircle className="spin" aria-hidden="true" /> Loading administration…
-      </section>
+  if (loading && !data) return <AdminSkeleton />;
+
+  const navBadges: Partial<Record<AdminTab, number>> = {
+    registrations: pendingRegistrationCount,
+    students: resetRequestCount,
+  };
+
+  const matches = (query: string, ...fields: (string | null | undefined)[]) => {
+    const terms = query.trim().toLowerCase().split(/\s+/).filter(Boolean);
+    const haystack = fields.join(" ").toLowerCase();
+    return terms.every((term) => haystack.includes(term));
+  };
+  const visibleRegistrations = registrations
+    .filter(
+      (registration) =>
+        (registrationFilter === "all" || registration.status === registrationFilter) &&
+        matches(
+          registrationQuery,
+          registration.full_names,
+          registration.surname,
+          registration.email,
+        ),
+    )
+    .sort(
+      (a, b) =>
+        Number(b.status === "pending") - Number(a.status === "pending") ||
+        Date.parse(b.created_at) - Date.parse(a.created_at),
     );
+  const profiles = data?.profiles ?? [];
+  const studentFilters: Record<StudentFilter, (person: AdminProfile) => boolean> = {
+    all: () => true,
+    attention: (person) => Boolean(person.password_reset_requested_at),
+    awaiting: (person) => person.active && person.must_change_password,
+    inactive: (person) => !person.active,
+    admins: (person) => person.role === "admin",
+  };
+  const visibleStudents = profiles
+    .filter(
+      (person) =>
+        studentFilters[studentFilter](person) &&
+        matches(studentQuery, person.full_name, person.email, person.student_id),
+    )
+    .sort(
+      (a, b) =>
+        Number(Boolean(b.password_reset_requested_at)) -
+        Number(Boolean(a.password_reset_requested_at)),
+    );
+  const attentionItems: {
+    id: string;
+    icon: ReactNode;
+    title: string;
+    detail: string;
+    action: string;
+    onOpen: () => void;
+  }[] = [];
+  if (pendingRegistrationCount > 0) {
+    attentionItems.push({
+      id: "registrations",
+      icon: <FileText aria-hidden="true" />,
+      title: `${pendingRegistrationCount} ${pendingRegistrationCount === 1 ? "registration is" : "registrations are"} waiting for review`,
+      detail: "Check the documents and approve student access.",
+      action: "Review",
+      onOpen: () => {
+        setRegistrationFilter("pending");
+        goToTab("registrations");
+      },
+    });
+  }
+  if (resetRequestCount > 0) {
+    attentionItems.push({
+      id: "passwords",
+      icon: <KeyRound aria-hidden="true" />,
+      title: `${resetRequestCount} password reset ${resetRequestCount === 1 ? "request" : "requests"}`,
+      detail: "Students who can’t sign in are waiting for a new temporary password.",
+      action: "Review",
+      onOpen: () => {
+        setStudentFilter("attention");
+        goToTab("students");
+      },
+    });
+  }
 
   return (
     <div className="admin-layout">
       <aside className="admin-sidebar">
-        <p className="eyebrow">ADMINISTRATION</p>
-        <nav aria-label="Administration">
-          {(
-            [
-              ["overview", LayoutDashboard, "Overview"],
-              ["registrations", FileText, "Registrations"],
-              ["content", BookOpen, "Course content"],
-              ["students", Users, "Students"],
-              ["activity", Clock3, "Activity"],
-            ] as const
-          ).map(([id, Icon, label]) => (
-            <button
-              key={id}
-              type="button"
-              className={tab === id ? "active" : ""}
-              onClick={() => {
-                setTab(id);
-                setError("");
-                setRetryableError(false);
-                setNotice("");
-                if (id === "content") {
-                  setContentFolderId(null);
-                  setContentSubfolderId(null);
-                  setSearch("");
-                }
-              }}
-            >
-              <Icon aria-hidden="true" /> {label}
-            </button>
-          ))}
-        </nav>
-        <div className="admin-help">
-          <ShieldCheck aria-hidden="true" />
-          <strong>Keep learning safe</strong>
-          <p>
-            Private course files are only available to assigned students. A screen recording or
-            photo cannot be completely prevented.
-          </p>
+        <div className="admin-sidebar-inner">
+          <p className="eyebrow">ADMINISTRATION</p>
+          <nav aria-label="Administration">
+            {(
+              [
+                ["overview", LayoutDashboard, "Overview"],
+                ["registrations", FileText, "Registrations"],
+                ["content", BookOpen, "Course content"],
+                ["students", Users, "Students"],
+                ["settings", Settings, "Settings"],
+              ] as const
+            ).map(([id, Icon, label]) => (
+              <button
+                key={id}
+                type="button"
+                className={tab === id ? "active" : ""}
+                aria-current={tab === id ? "page" : undefined}
+                onClick={(event) => {
+                  const layout = event.currentTarget.closest(".admin-layout");
+                  event.currentTarget.scrollIntoView({
+                    behavior: "smooth",
+                    block: "nearest",
+                    inline: "center",
+                  });
+                  if (layout && layout.getBoundingClientRect().top < 0) {
+                    layout.scrollIntoView({ behavior: "smooth", block: "start" });
+                  }
+                  goToTab(id);
+                }}
+              >
+                <Icon aria-hidden="true" /> {label}
+                {Boolean(navBadges[id]) && (
+                  <span className="nav-badge" aria-label={`${navBadges[id]} need attention`}>
+                    {navBadges[id]}
+                  </span>
+                )}
+              </button>
+            ))}
+          </nav>
+          <div className="admin-help">
+            <ShieldCheck aria-hidden="true" />
+            <strong>Keep learning safe</strong>
+            <p>
+              Private course files are only available to assigned students. A screen recording or
+              photo cannot be completely prevented.
+            </p>
+          </div>
         </div>
       </aside>
       <section className="admin-content">
@@ -2728,42 +3411,55 @@ function AdminWorkspace({ profile, preview = false }: { profile: Profile; previe
                     ? "Student registrations"
                     : tab === "students"
                       ? "People & access"
-                      : "Recent activity"}
+                      : "Settings"}
             </h1>
           </div>
-          {tab === "content" && (
+          <div className="admin-topline-actions">
             <button
-              className="brand-button"
+              className="admin-search-trigger"
               type="button"
-              onClick={
-                contentFolder
-                  ? () => {
-                      setEditing(null);
-                      setShowForm(true);
-                    }
-                  : () => {
-                      setModuleEditing(null);
-                      setModuleFormOpen(true);
-                    }
-              }
+              onClick={() => setPaletteOpen(true)}
+              aria-label="Search or jump to"
+              aria-keyshortcuts="Control+K Meta+K"
             >
-              <Plus aria-hidden="true" />
-              {contentFolder ? "Add course content" : "Add module folder"}
+              <Search aria-hidden="true" />
+              <span>Search or jump to…</span>
+              <kbd>Ctrl K</kbd>
             </button>
-          )}
-          {tab === "students" && (
-            <button
-              className="brand-button"
-              type="button"
-              onClick={() => {
-                setDialogError("");
-                setInviteOpen(true);
-              }}
-              disabled={busy}
-            >
-              <Plus aria-hidden="true" /> Invite student
-            </button>
-          )}
+            {tab === "content" && (
+              <button
+                className="brand-button"
+                type="button"
+                onClick={
+                  contentFolder
+                    ? () => {
+                        setEditing(null);
+                        setShowForm(true);
+                      }
+                    : () => {
+                        setModuleEditing(null);
+                        setModuleFormOpen(true);
+                      }
+                }
+              >
+                <Plus aria-hidden="true" />
+                {contentFolder ? "Add course content" : "Add module folder"}
+              </button>
+            )}
+            {tab === "students" && (
+              <button
+                className="brand-button"
+                type="button"
+                onClick={() => {
+                  setDialogError("");
+                  setInviteOpen(true);
+                }}
+                disabled={busy}
+              >
+                <Plus aria-hidden="true" /> Invite student
+              </button>
+            )}
+          </div>
         </div>
         {error && (
           <div className="admin-error" role="alert">
@@ -2787,325 +3483,265 @@ function AdminWorkspace({ profile, preview = false }: { profile: Profile; previe
             </div>
           </div>
         )}
-        {notice && (
-          <p className="admin-notice" role="status">
-            {notice}
-            <button type="button" aria-label="Dismiss" onClick={() => setNotice("")}>
-              <X aria-hidden="true" />
-            </button>
-          </p>
-        )}
-        {!error && !data ? null : tab === "overview" ? (
-          <div className="admin-overview">
-            <section className="admin-welcome-band" aria-label="Administration overview">
-              <div>
-                <p className="eyebrow">YOUR WORKSPACE</p>
-                <h2>Welcome back, {profile.full_name.split(" ")[0]}</h2>
-                <p>Course content, student access, and activity—together in one place.</p>
-              </div>
-              <span className="admin-welcome-mark" aria-hidden="true">
-                <LayoutDashboard />
-              </span>
-            </section>
-            <div className="stat-grid">
-              <StatCard
-                label="Pending registrations"
-                value={String(
-                  registrations.filter((registration) => registration.status === "pending").length,
-                )}
-                icon={<FileText aria-hidden="true" />}
-              />
-              <StatCard
-                label="Active students"
-                value={String(
-                  data?.profiles.filter((person) => person.active && person.role === "student")
-                    .length ?? 0,
-                )}
-                icon={<Users aria-hidden="true" />}
-              />
-              <StatCard
-                label="Learning modules"
-                value={String(data?.modules.length ?? 0)}
-                icon={<BookOpen aria-hidden="true" />}
-              />
-              <StatCard
-                label="Published items"
-                value={String(
-                  data?.items.filter((item) => !item.is_hidden && !item.deleted_at).length ?? 0,
-                )}
-                icon={<FileText aria-hidden="true" />}
-              />
-            </div>
-            {data && (missingStarterModules.length > 0 || studentsMissingStarterModules) && (
-              <section className="admin-empty">
-                <span className="empty-icon">
-                  <BookOpen aria-hidden="true" />
+        <Presence>
+          {notice && (
+            <p className="admin-notice" role="status">
+              {notice}
+              <button type="button" aria-label="Dismiss" onClick={() => setNotice("")}>
+                <X aria-hidden="true" />
+              </button>
+            </p>
+          )}
+        </Presence>
+        <div className="admin-tab-panel" key={tab}>
+          {!error && !data ? null : tab === "overview" ? (
+            <div className="admin-overview">
+              <section className="admin-welcome-band" aria-label="Administration overview">
+                <div>
+                  <p className="eyebrow">YOUR WORKSPACE</p>
+                  <h2>Welcome back, {profile.full_name.split(" ")[0]}</h2>
+                  <p>Course content, registrations, and student access—together in one place.</p>
+                </div>
+                <span className="admin-welcome-mark" aria-hidden="true">
+                  <LayoutDashboard />
                 </span>
-                <h2>
-                  {missingStarterModules.length
-                    ? "Set up your learning modules"
-                    : "Assign modules to students"}
-                </h2>
-                <p>
-                  Add any missing starter folders and make Induction and Modules 1–6 available on
-                  every active student’s dashboard.
-                </p>
-                <button
-                  className="brand-button"
-                  type="button"
-                  disabled={busy}
-                  onClick={() => void seedModules()}
-                >
-                  {busy ? (
-                    <LoaderCircle className="spin" aria-hidden="true" />
-                  ) : (
-                    <Plus aria-hidden="true" />
-                  )}{" "}
-                  {missingStarterModules.length
-                    ? "Add starter modules and assign students"
-                    : "Assign starter modules to students"}
-                </button>
               </section>
-            )}
-            <div className="admin-section-heading">
-              <div>
-                <p className="eyebrow">QUICK ACTIONS</p>
-                <h2>What would you like to do?</h2>
-              </div>
-            </div>
-            <div className="quick-actions">
-              <button type="button" onClick={() => setTab("content")}>
-                <Plus aria-hidden="true" />
-                <strong>Add course content</strong>
-                <span>Upload a textbook, video, or podcast.</span>
-              </button>
-              <button type="button" onClick={() => setTab("students")}>
-                <Users aria-hidden="true" />
-                <strong>Manage students</strong>
-                <span>Invite students and manage access.</span>
-              </button>
-              <button type="button" onClick={() => setTab("registrations")}>
-                <FileText aria-hidden="true" />
-                <strong>Review registrations</strong>
-                <span>Check documents and approve student access.</span>
-              </button>
-              <button type="button" onClick={() => setTab("activity")}>
-                <Clock3 aria-hidden="true" />
-                <strong>View activity</strong>
-                <span>See recent course access.</span>
-              </button>
-            </div>
-          </div>
-        ) : tab === "content" ? (
-          <div className="admin-content-browser">
-            {!data?.modules.length ? (
-              <div className="admin-table-card">
-                <div className="admin-empty small">
-                  <h2>No learning modules yet</h2>
-                  <p>Create Induction and Modules 1–6 before adding course materials.</p>
-                  <button
-                    className="outline-button"
-                    type="button"
-                    onClick={() => setTab("overview")}
-                  >
-                    Go to overview <ArrowRight aria-hidden="true" />
-                  </button>
-                </div>
-              </div>
-            ) : contentFolder ? (
-              <>
-                <div className="folder-path">
-                  <button
-                    className="folder-back"
-                    type="button"
-                    onClick={() => {
-                      if (contentSubfolder) {
-                        setContentSubfolderId(contentSubfolder.parent_folder_id);
-                      } else {
-                        setContentFolderId(null);
-                      }
-                      setSearch("");
-                    }}
-                  >
-                    <ArrowLeft aria-hidden="true" />
-                    {contentSubfolder?.parent_folder_id ? "Parent folder" : "All module folders"}
-                  </button>
-                  <span className="folder-path-divider">/</span>
-                  <span className="folder-path-icon">
-                    <FolderOpen aria-hidden="true" />
-                  </span>
-                  <strong>{contentFolder.title}</strong>
-                  {contentSubfolder && (
-                    <>
-                      <span className="folder-path-divider">/</span>
-                      <strong>{contentSubfolder.title}</strong>
-                    </>
+              <div className="stat-grid">
+                <StatCard
+                  label="Pending registrations"
+                  value={String(pendingRegistrationCount)}
+                  icon={<FileText aria-hidden="true" />}
+                  highlight={pendingRegistrationCount > 0}
+                  onOpen={() => {
+                    setRegistrationFilter("pending");
+                    goToTab("registrations");
+                  }}
+                />
+                <StatCard
+                  label="Active students"
+                  value={String(activeStudents.length)}
+                  icon={<Users aria-hidden="true" />}
+                  onOpen={() => {
+                    setStudentFilter("all");
+                    goToTab("students");
+                  }}
+                />
+                <StatCard
+                  label="Learning modules"
+                  value={String(data?.modules.length ?? 0)}
+                  icon={<BookOpen aria-hidden="true" />}
+                  onOpen={() => goToTab("content")}
+                />
+                <StatCard
+                  label="Published items"
+                  value={String(
+                    data?.items.filter((item) => !item.is_hidden && !item.deleted_at).length ?? 0,
                   )}
-                  <span className="folder-path-count">
-                    {
-                      (data?.items ?? []).filter(
-                        (item) =>
-                          item.module_id === contentFolder.id &&
-                          item.folder_id === contentSubfolderId &&
-                          !item.deleted_at,
-                      ).length
-                    }{" "}
-                    items
-                  </span>
-                </div>
-                <div className="table-toolbar folder-items-toolbar">
-                  <label className="search-field">
-                    <Search aria-hidden="true" />
-                    <input
-                      value={search}
-                      onChange={(event) => setSearch(event.target.value)}
-                      placeholder="Search this module"
-                      aria-label={`Search ${contentFolder.title}`}
-                    />
-                  </label>
-                  <label className="checkbox-label">
-                    <input
-                      type="checkbox"
-                      checked={includeDeleted}
-                      onChange={(event) => setIncludeDeleted(event.target.checked)}
-                    />
-                    Recently deleted
-                  </label>
-                  <button
-                    className="outline-button"
-                    type="button"
-                    onClick={() => {
-                      setFolderEditing(null);
-                      setFolderFormOpen(true);
-                    }}
-                  >
-                    <Plus aria-hidden="true" /> Add subfolder
-                  </button>
-                </div>
-                <div className="course-folder-grid">
-                  {(data?.folders ?? [])
-                    .filter(
-                      (folder) =>
-                        folder.module_id === contentFolder.id &&
-                        folder.parent_folder_id === contentSubfolderId,
-                    )
-                    .map((folder) => (
-                      <article className="course-folder-card" key={folder.id}>
-                        <button
-                          className="course-folder-main"
-                          type="button"
-                          onClick={() => setContentSubfolderId(folder.id)}
-                        >
-                          <span className="course-folder-icon">
-                            <Folder aria-hidden="true" />
-                          </span>
-                          <span className="module-kicker">CONTENT FOLDER</span>
-                          <strong>{folder.title}</strong>
-                          <span className="course-folder-description">
-                            {folder.description || "Open this folder to manage its materials."}
-                          </span>
-                          <span className="course-folder-open">
-                            Open folder <ArrowRight aria-hidden="true" />
-                          </span>
-                        </button>
-                        <div className="course-folder-actions">
-                          <button
-                            className="outline-button"
-                            type="button"
-                            onClick={() => {
-                              setFolderEditing(folder);
-                              setFolderFormOpen(true);
-                            }}
-                          >
-                            Edit folder
-                          </button>
-                          <button
-                            className="danger-outline-button"
-                            type="button"
-                            onClick={() => {
-                              if (!window.confirm(`Delete the "${folder.title}" folder?`)) return;
-                              void deletePortalFolder({ data: { id: folder.id } }).then(refresh);
-                            }}
-                          >
-                            <Trash2 aria-hidden="true" /> Delete
-                          </button>
-                        </div>
-                      </article>
-                    ))}
-                </div>
-                <div className="admin-table-card">
-                  <ContentAdminList
-                    items={(data?.items ?? []).filter(
-                      (item) =>
-                        item.module_id === contentFolder.id &&
-                        item.folder_id === contentSubfolderId,
-                    )}
-                    modules={[contentFolder]}
-                    search={search}
-                    includeDeleted={includeDeleted}
-                    busy={busy}
-                    onEdit={(item) => {
-                      setEditing(item);
-                      setShowForm(true);
-                    }}
-                    onAction={(item, action) => void toggleItem(item, action)}
-                  />
-                </div>
-              </>
-            ) : (
-              <>
-                <div className="folder-intro">
+                  icon={<FileText aria-hidden="true" />}
+                  onOpen={() => goToTab("content")}
+                />
+              </div>
+              <section className="attention-panel" aria-labelledby="attention-title">
+                <div className="admin-section-heading">
                   <div>
-                    <p className="eyebrow">YOUR COURSE LIBRARY</p>
-                    <h2>Choose a module folder</h2>
-                    <p>Open a folder to find and manage its learning materials.</p>
+                    <p className="eyebrow">NEEDS YOUR ATTENTION</p>
+                    <h2 id="attention-title">
+                      {attentionItems.length
+                        ? "A few things are waiting for you"
+                        : "You’re all caught up"}
+                    </h2>
                   </div>
-                  <label className="search-field">
-                    <Search aria-hidden="true" />
-                    <input
-                      value={search}
-                      onChange={(event) => setSearch(event.target.value)}
-                      placeholder="Find a module"
-                      aria-label="Search module folders"
-                    />
-                  </label>
                 </div>
-                <div className="course-folder-grid">
-                  {(data?.modules ?? [])
-                    .filter((module) =>
-                      `${module.title} ${module.description}`
-                        .toLowerCase()
-                        .includes(search.toLowerCase()),
-                    )
-                    .map((module) => {
-                      const items = (data?.items ?? []).filter(
-                        (item) => item.module_id === module.id && !item.deleted_at,
-                      );
-                      const publishedCount = items.filter((item) => !item.is_hidden).length;
-                      return (
-                        <article className="course-folder-card" key={module.id}>
+                {attentionItems.length ? (
+                  <ul className="attention-list">
+                    {attentionItems.map((item) => (
+                      <li key={item.id}>
+                        <span className="attention-icon">{item.icon}</span>
+                        <div>
+                          <strong>{item.title}</strong>
+                          <span>{item.detail}</span>
+                        </div>
+                        <button className="outline-button" type="button" onClick={item.onOpen}>
+                          {item.action} <ArrowRight aria-hidden="true" />
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="attention-clear">
+                    <Check aria-hidden="true" /> No registrations to review and no password requests
+                    right now.
+                  </p>
+                )}
+              </section>
+              {data && (missingStarterModules.length > 0 || studentsMissingStarterModules) && (
+                <section className="admin-empty">
+                  <span className="empty-icon">
+                    <BookOpen aria-hidden="true" />
+                  </span>
+                  <h2>
+                    {missingStarterModules.length
+                      ? "Set up your learning modules"
+                      : "Assign modules to students"}
+                  </h2>
+                  <p>
+                    Add any missing starter folders and make Induction and Modules 1–6 available on
+                    every active student’s dashboard.
+                  </p>
+                  <button
+                    className="brand-button"
+                    type="button"
+                    disabled={busy}
+                    onClick={() => void seedModules()}
+                  >
+                    {busy ? (
+                      <LoaderCircle className="spin" aria-hidden="true" />
+                    ) : (
+                      <Plus aria-hidden="true" />
+                    )}{" "}
+                    {missingStarterModules.length
+                      ? "Add starter modules and assign students"
+                      : "Assign starter modules to students"}
+                  </button>
+                </section>
+              )}
+              <div className="admin-section-heading">
+                <div>
+                  <p className="eyebrow">QUICK ACTIONS</p>
+                  <h2>What would you like to do?</h2>
+                </div>
+              </div>
+              <div className="quick-actions">
+                <button type="button" onClick={() => goToTab("content")}>
+                  <Plus aria-hidden="true" />
+                  <strong>Add course content</strong>
+                  <span>Upload a textbook, video, or podcast.</span>
+                </button>
+                <button type="button" onClick={() => goToTab("students")}>
+                  <Users aria-hidden="true" />
+                  <strong>Manage students</strong>
+                  <span>Invite students and manage access.</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setRegistrationFilter("all");
+                    goToTab("registrations");
+                  }}
+                >
+                  <FileText aria-hidden="true" />
+                  <strong>Review registrations</strong>
+                  <span>Check documents and approve student access.</span>
+                </button>
+              </div>
+            </div>
+          ) : tab === "content" ? (
+            <div className="admin-content-browser">
+              {!data?.modules.length ? (
+                <div className="admin-table-card">
+                  <div className="admin-empty small">
+                    <h2>No learning modules yet</h2>
+                    <p>Create Induction and Modules 1–6 before adding course materials.</p>
+                    <button
+                      className="outline-button"
+                      type="button"
+                      onClick={() => setTab("overview")}
+                    >
+                      Go to overview <ArrowRight aria-hidden="true" />
+                    </button>
+                  </div>
+                </div>
+              ) : contentFolder ? (
+                <>
+                  <div className="folder-path">
+                    <button
+                      className="folder-back"
+                      type="button"
+                      onClick={() => {
+                        if (contentSubfolder) {
+                          setContentSubfolderId(contentSubfolder.parent_folder_id);
+                        } else {
+                          setContentFolderId(null);
+                        }
+                        setSearch("");
+                      }}
+                    >
+                      <ArrowLeft aria-hidden="true" />
+                      {contentSubfolder?.parent_folder_id ? "Parent folder" : "All module folders"}
+                    </button>
+                    <span className="folder-path-divider">/</span>
+                    <span className="folder-path-icon">
+                      <FolderOpen aria-hidden="true" />
+                    </span>
+                    <strong>{contentFolder.title}</strong>
+                    {contentSubfolder && (
+                      <>
+                        <span className="folder-path-divider">/</span>
+                        <strong>{contentSubfolder.title}</strong>
+                      </>
+                    )}
+                    <span className="folder-path-count">
+                      {
+                        (data?.items ?? []).filter(
+                          (item) =>
+                            item.module_id === contentFolder.id &&
+                            item.folder_id === contentSubfolderId &&
+                            !item.deleted_at,
+                        ).length
+                      }{" "}
+                      items
+                    </span>
+                  </div>
+                  <div className="table-toolbar folder-items-toolbar">
+                    <label className="search-field">
+                      <Search aria-hidden="true" />
+                      <input
+                        value={search}
+                        onChange={(event) => setSearch(event.target.value)}
+                        placeholder="Search this module"
+                        aria-label={`Search ${contentFolder.title}`}
+                      />
+                    </label>
+                    <label className="checkbox-label">
+                      <input
+                        type="checkbox"
+                        checked={includeDeleted}
+                        onChange={(event) => setIncludeDeleted(event.target.checked)}
+                      />
+                      Recently deleted
+                    </label>
+                    <button
+                      className="outline-button"
+                      type="button"
+                      onClick={() => {
+                        setFolderEditing(null);
+                        setFolderFormOpen(true);
+                      }}
+                    >
+                      <Plus aria-hidden="true" /> Add subfolder
+                    </button>
+                  </div>
+                  <div className="course-folder-grid">
+                    {(data?.folders ?? [])
+                      .filter(
+                        (folder) =>
+                          folder.module_id === contentFolder.id &&
+                          folder.parent_folder_id === contentSubfolderId,
+                      )
+                      .map((folder) => (
+                        <article className="course-folder-card" key={folder.id}>
                           <button
                             className="course-folder-main"
                             type="button"
-                            onClick={() => {
-                              setSearch("");
-                              setContentFolderId(module.id);
-                              setContentSubfolderId(null);
-                            }}
-                            aria-label={`Open ${module.title} folder, ${items.length} items`}
+                            onClick={() => setContentSubfolderId(folder.id)}
                           >
                             <span className="course-folder-icon">
                               <Folder aria-hidden="true" />
                             </span>
-                            <span className="module-kicker">COURSE FOLDER</span>
-                            <strong>{module.title}</strong>
+                            <span className="module-kicker">CONTENT FOLDER</span>
+                            <strong>{folder.title}</strong>
                             <span className="course-folder-description">
-                              {module.description || "Open this folder to manage course materials."}
-                            </span>
-                            <span className="course-folder-count">
-                              <FileText aria-hidden="true" />
-                              {items.length} {items.length === 1 ? "item" : "items"} ·{" "}
-                              {publishedCount} published
+                              {folder.description || "Open this folder to manage its materials."}
                             </span>
                             <span className="course-folder-open">
                               Open folder <ArrowRight aria-hidden="true" />
@@ -3115,10 +3751,9 @@ function AdminWorkspace({ profile, preview = false }: { profile: Profile; previe
                             <button
                               className="outline-button"
                               type="button"
-                              disabled={busy}
                               onClick={() => {
-                                setModuleEditing(module);
-                                setModuleFormOpen(true);
+                                setFolderEditing(folder);
+                                setFolderFormOpen(true);
                               }}
                             >
                               Edit folder
@@ -3126,362 +3761,863 @@ function AdminWorkspace({ profile, preview = false }: { profile: Profile; previe
                             <button
                               className="danger-outline-button"
                               type="button"
-                              disabled={busy}
-                              onClick={() => void removeModule(module)}
+                              onClick={() => {
+                                if (!window.confirm(`Delete the "${folder.title}" folder?`)) return;
+                                void deletePortalFolder({ data: { id: folder.id } }).then(refresh);
+                              }}
                             >
                               <Trash2 aria-hidden="true" /> Delete
                             </button>
                           </div>
                         </article>
-                      );
-                    })}
-                  {!data?.modules.some((module) =>
-                    `${module.title} ${module.description}`
-                      .toLowerCase()
-                      .includes(search.toLowerCase()),
-                  ) && <p className="empty-search">No module folders match “{search}”.</p>}
+                      ))}
+                  </div>
+                  <div className="admin-table-card">
+                    <ContentAdminList
+                      items={(data?.items ?? []).filter(
+                        (item) =>
+                          item.module_id === contentFolder.id &&
+                          item.folder_id === contentSubfolderId,
+                      )}
+                      modules={[contentFolder]}
+                      search={search}
+                      includeDeleted={includeDeleted}
+                      busy={busy}
+                      onEdit={(item) => {
+                        setEditing(item);
+                        setShowForm(true);
+                      }}
+                      onAction={(item, action) => void toggleItem(item, action)}
+                    />
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="folder-intro">
+                    <div>
+                      <p className="eyebrow">YOUR COURSE LIBRARY</p>
+                      <h2>Choose a module folder</h2>
+                      <p>Open a folder to find and manage its learning materials.</p>
+                    </div>
+                    <label className="search-field">
+                      <Search aria-hidden="true" />
+                      <input
+                        value={search}
+                        onChange={(event) => setSearch(event.target.value)}
+                        placeholder="Find a module"
+                        aria-label="Search module folders"
+                      />
+                    </label>
+                  </div>
+                  <div className="course-folder-grid">
+                    {(data?.modules ?? [])
+                      .filter((module) =>
+                        `${module.title} ${module.description}`
+                          .toLowerCase()
+                          .includes(search.toLowerCase()),
+                      )
+                      .map((module) => {
+                        const items = (data?.items ?? []).filter(
+                          (item) => item.module_id === module.id && !item.deleted_at,
+                        );
+                        const publishedCount = items.filter((item) => !item.is_hidden).length;
+                        return (
+                          <article className="course-folder-card" key={module.id}>
+                            <button
+                              className="course-folder-main"
+                              type="button"
+                              onClick={() => {
+                                setSearch("");
+                                setContentFolderId(module.id);
+                                setContentSubfolderId(null);
+                              }}
+                              aria-label={`Open ${module.title} folder, ${items.length} items`}
+                            >
+                              <span className="course-folder-icon">
+                                <Folder aria-hidden="true" />
+                              </span>
+                              <span className="module-kicker">COURSE FOLDER</span>
+                              <strong>{module.title}</strong>
+                              <span className="course-folder-description">
+                                {module.description ||
+                                  "Open this folder to manage course materials."}
+                              </span>
+                              <span className="course-folder-count">
+                                <FileText aria-hidden="true" />
+                                {items.length} {items.length === 1 ? "item" : "items"} ·{" "}
+                                {publishedCount} published
+                              </span>
+                              <span className="course-folder-open">
+                                Open folder <ArrowRight aria-hidden="true" />
+                              </span>
+                            </button>
+                            <div className="course-folder-actions">
+                              <button
+                                className="outline-button"
+                                type="button"
+                                disabled={busy}
+                                onClick={() => {
+                                  setModuleEditing(module);
+                                  setModuleFormOpen(true);
+                                }}
+                              >
+                                Edit folder
+                              </button>
+                              <button
+                                className="danger-outline-button"
+                                type="button"
+                                disabled={busy}
+                                onClick={() => void removeModule(module)}
+                              >
+                                <Trash2 aria-hidden="true" /> Delete
+                              </button>
+                            </div>
+                          </article>
+                        );
+                      })}
+                    {!data?.modules.some((module) =>
+                      `${module.title} ${module.description}`
+                        .toLowerCase()
+                        .includes(search.toLowerCase()),
+                    ) && <p className="empty-search">No module folders match “{search}”.</p>}
+                  </div>
+                </>
+              )}
+            </div>
+          ) : tab === "registrations" ? (
+            <div className="admin-table-card registration-admin-card">
+              <div className="table-toolbar">
+                <div>
+                  <p>Review submitted applications and supporting documents.</p>
+                  <span className="form-hint">
+                    Approving creates the login account and assigns the starter modules.
+                  </span>
                 </div>
-              </>
-            )}
-          </div>
-        ) : tab === "registrations" ? (
-          <div className="admin-table-card registration-admin-card">
-            <div className="table-toolbar">
-              <div>
-                <p>Review submitted applications and supporting documents.</p>
-                <span className="form-hint">
-                  Approving creates the login account and assigns the starter modules.
+                <span className="student-count">{registrations.length} applications</span>
+              </div>
+              <div className="admin-filterbar">
+                <SearchBox
+                  value={registrationQuery}
+                  onChange={setRegistrationQuery}
+                  placeholder="Search by name or email"
+                  label="Search registrations"
+                />
+                <FilterChips
+                  label="Filter registrations by status"
+                  value={registrationFilter}
+                  onChange={setRegistrationFilter}
+                  options={[
+                    { id: "all", label: "All", count: registrations.length },
+                    { id: "pending", label: "Needs review", count: pendingRegistrationCount },
+                    {
+                      id: "approved",
+                      label: "Approved",
+                      count: registrations.filter((item) => item.status === "approved").length,
+                    },
+                    {
+                      id: "rejected",
+                      label: "Rejected",
+                      count: registrations.filter((item) => item.status === "rejected").length,
+                    },
+                  ]}
+                />
+              </div>
+              <div className="registration-admin-list">
+                {visibleRegistrations.map((registration) => (
+                  <article className="registration-admin-row" key={registration.id}>
+                    <span className="student-avatar">
+                      {registration.full_names.trim().charAt(0).toUpperCase() || "S"}
+                    </span>
+                    <div className="registration-admin-copy">
+                      <strong>
+                        {registration.full_names} {registration.surname}
+                      </strong>
+                      <span>{registration.email}</span>
+                      <small>
+                        Submitted {new Date(registration.created_at).toLocaleDateString()} ·{" "}
+                        {registration.payment_plan === "once_off"
+                          ? "R6,000 once-off"
+                          : "R1,200 × 6 months"}
+                      </small>
+                    </div>
+                    <span className={`status-pill ${registrationStatusClass(registration.status)}`}>
+                      {registration.status === "pending"
+                        ? "Needs review"
+                        : registration.status.charAt(0).toUpperCase() +
+                          registration.status.slice(1)}
+                    </span>
+                    <button
+                      className="outline-button"
+                      type="button"
+                      onClick={() => {
+                        setDialogError("");
+                        setRegistrationLogin(null);
+                        setSelectedRegistration(registration);
+                      }}
+                    >
+                      {registration.status === "pending" ? "Review application" : "View details"}{" "}
+                      <ArrowRight aria-hidden="true" />
+                    </button>
+                  </article>
+                ))}
+                {!visibleRegistrations.length && (
+                  <div className="admin-empty small">
+                    <h2>
+                      {registrations.length ? "No applications match" : "No registrations yet"}
+                    </h2>
+                    <p>
+                      {registrations.length
+                        ? "Try a different search or status filter."
+                        : "New student applications will appear here for review."}
+                    </p>
+                    {registrations.length > 0 && (
+                      <button
+                        className="outline-button"
+                        type="button"
+                        onClick={() => {
+                          setRegistrationQuery("");
+                          setRegistrationFilter("all");
+                        }}
+                      >
+                        Clear filters
+                      </button>
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+          ) : tab === "students" ? (
+            <div className="admin-table-card">
+              <div className="table-toolbar">
+                <p>Review student and administrator accounts and assigned course access.</p>
+                <span className="student-count">
+                  {profiles.length} accounts
+                  {resetRequestCount > 0 &&
+                    ` · ${resetRequestCount} password ${resetRequestCount === 1 ? "request" : "requests"}`}
                 </span>
               </div>
-              <span className="student-count">{registrations.length} applications</span>
-            </div>
-            <div className="registration-admin-list">
-              {registrations.map((registration) => (
-                <article className="registration-admin-row" key={registration.id}>
-                  <span className="student-avatar">
-                    {registration.full_names.trim().charAt(0).toUpperCase() || "S"}
-                  </span>
-                  <div className="registration-admin-copy">
-                    <strong>
-                      {registration.full_names} {registration.surname}
-                    </strong>
-                    <span>{registration.email}</span>
-                    <small>
-                      Submitted {new Date(registration.created_at).toLocaleDateString()} ·{" "}
-                      {registration.payment_plan === "once_off"
-                        ? "R6,000 once-off"
-                        : "R1,200 × 6 months"}
-                    </small>
-                  </div>
-                  <span className={`status-pill ${registrationStatusClass(registration.status)}`}>
-                    {registration.status === "pending"
-                      ? "Needs review"
-                      : registration.status.charAt(0).toUpperCase() + registration.status.slice(1)}
-                  </span>
-                  <button
-                    className="outline-button"
-                    type="button"
-                    onClick={() => {
-                      setDialogError("");
-                      setRegistrationLogin(null);
-                      setSelectedRegistration(registration);
-                    }}
-                  >
-                    {registration.status === "pending" ? "Review application" : "View details"}{" "}
-                    <ArrowRight aria-hidden="true" />
-                  </button>
-                </article>
-              ))}
-              {!registrations.length && (
-                <div className="admin-empty small">
-                  <h2>No registrations yet</h2>
-                  <p>New student applications will appear here for review.</p>
-                </div>
-              )}
-            </div>
-          </div>
-        ) : tab === "students" ? (
-          <div className="admin-table-card">
-            <div className="table-toolbar">
-              <p>Review student and administrator accounts and assigned course access.</p>
-              <span className="student-count">{data?.profiles.length ?? 0} accounts</span>
-            </div>
-            <div className="student-list">
-              {(data?.profiles ?? []).map((person) => (
-                <article className="student-row" key={person.id}>
-                  <span className="student-avatar">
-                    {person.full_name.trim().charAt(0).toUpperCase() || "S"}
-                  </span>
-                  <div className="student-row-copy">
-                    <strong>{person.full_name}</strong>
-                    <span>
-                      {person.email || person.student_id} ·{" "}
-                      {person.role === "admin" ? "Administrator" : person.student_id}
+              <div className="admin-filterbar">
+                <SearchBox
+                  value={studentQuery}
+                  onChange={setStudentQuery}
+                  placeholder="Search by name, email or student ID"
+                  label="Search students"
+                />
+                <FilterChips
+                  label="Filter accounts"
+                  value={studentFilter}
+                  onChange={setStudentFilter}
+                  options={[
+                    { id: "all", label: "Everyone", count: profiles.length },
+                    {
+                      id: "attention",
+                      label: "Password requests",
+                      count: profiles.filter(studentFilters.attention).length,
+                    },
+                    {
+                      id: "awaiting",
+                      label: "Awaiting first sign-in",
+                      count: profiles.filter(studentFilters.awaiting).length,
+                    },
+                    {
+                      id: "inactive",
+                      label: "Inactive",
+                      count: profiles.filter(studentFilters.inactive).length,
+                    },
+                    {
+                      id: "admins",
+                      label: "Administrators",
+                      count: profiles.filter(studentFilters.admins).length,
+                    },
+                  ]}
+                />
+              </div>
+              <div className="student-list">
+                {visibleStudents.map((person) => (
+                  <article className="student-row" key={person.id}>
+                    <span className="student-avatar">
+                      {person.full_name.trim().charAt(0).toUpperCase() || "S"}
                     </span>
+                    <div className="student-row-copy">
+                      <strong>{person.full_name}</strong>
+                      <span>
+                        {person.email || person.student_id} ·{" "}
+                        {person.role === "admin" ? "Administrator" : person.student_id}
+                      </span>
+                    </div>
+                    <span
+                      className={`status-pill ${
+                        !person.active
+                          ? "not_started"
+                          : person.password_reset_requested_at
+                            ? "in_progress"
+                            : person.must_change_password
+                              ? "not_started"
+                              : "completed"
+                      }`}
+                    >
+                      {!person.active
+                        ? "Inactive"
+                        : person.password_reset_requested_at
+                          ? "Reset requested"
+                          : person.must_change_password
+                            ? "Awaiting first sign-in"
+                            : "Active"}
+                    </span>
+                    {person.password_reset_requested_at && person.role === "student" && (
+                      <button
+                        className="brand-button"
+                        type="button"
+                        onClick={() => {
+                          setDialogError("");
+                          setPasswordLogin(null);
+                          setPasswordDialog(person);
+                        }}
+                      >
+                        <KeyRound aria-hidden="true" /> Review request
+                      </button>
+                    )}
+                    <button
+                      className="outline-button"
+                      type="button"
+                      onClick={() => {
+                        setDialogError("");
+                        setStudentDialog(person);
+                      }}
+                    >
+                      Manage <ArrowRight aria-hidden="true" />
+                    </button>
+                  </article>
+                ))}
+                {!visibleStudents.length && (
+                  <div className="admin-empty small">
+                    <h2>{profiles.length ? "No accounts match" : "No student accounts yet"}</h2>
+                    <p>
+                      {profiles.length
+                        ? "Try a different search or filter."
+                        : "Invite a student to give them access to their courses."}
+                    </p>
+                    {profiles.length ? (
+                      <button
+                        className="outline-button"
+                        type="button"
+                        onClick={() => {
+                          setStudentQuery("");
+                          setStudentFilter("all");
+                        }}
+                      >
+                        Clear filters
+                      </button>
+                    ) : (
+                      <button
+                        className="brand-button"
+                        type="button"
+                        onClick={() => {
+                          setDialogError("");
+                          setInviteOpen(true);
+                        }}
+                      >
+                        <Plus aria-hidden="true" /> Invite student
+                      </button>
+                    )}
                   </div>
-                  <span className={`status-pill ${person.active ? "completed" : "not_started"}`}>
-                    {person.active ? "Active" : "Inactive"}
-                  </span>
-                  <button
-                    className="outline-button"
-                    type="button"
-                    onClick={() => {
-                      setDialogError("");
-                      setStudentDialog(person);
-                    }}
-                  >
-                    Manage <ArrowRight aria-hidden="true" />
-                  </button>
-                </article>
-              ))}
-              {!data?.profiles.length && (
-                <div className="admin-empty small">
-                  <h2>No student accounts yet</h2>
-                  <p>
-                    There are no accounts to manage right now. Create student invitations in
-                    Supabase Auth or contact your portal administrator.
-                  </p>
-                </div>
-              )}
+                )}
+              </div>
             </div>
-          </div>
-        ) : (
-          <div className="admin-table-card">
-            <div className="table-toolbar">
-              <p>Latest activity recorded by the learning portal.</p>
-              <span className="student-count">{data?.logs.length ?? 0} records</span>
-            </div>
-            <div className="activity-list">
-              {(data?.logs ?? []).map((log) => {
-                const person = data?.profiles.find((item) => item.id === log.student_id);
-                const item = data?.items.find((entry) => entry.id === log.content_id);
-                return (
-                  <article className="activity-row" key={log.id}>
-                    <span className="activity-dot" />
+          ) : tab === "settings" ? (
+            <SettingsPanel
+              account={toSettingsAccount(profile)}
+              preferences={preferences}
+              onPreferencesChange={onPreferencesChange}
+              onAccountChanged={onAccountChanged}
+              onSignOutEverywhere={onSignOutEverywhere}
+            >
+              <SettingsCard
+                id="settings-course-setup"
+                icon={<BookOpen aria-hidden="true" />}
+                title="Course setup"
+                description="Keep the starter modules available to every active student."
+              >
+                <dl className="settings-facts">
+                  <div>
+                    <dt>Starter modules created</dt>
+                    <dd>
+                      {STARTER_MODULES.length - missingStarterModules.length} of{" "}
+                      {STARTER_MODULES.length}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt>Active students</dt>
+                    <dd>{activeStudents.length}</dd>
+                  </div>
+                </dl>
+                {missingStarterModules.length > 0 || studentsMissingStarterModules ? (
+                  <div className="settings-row">
                     <div>
                       <strong>
-                        {person?.full_name ?? "Student"} opened {item?.title ?? "learning content"}
+                        {missingStarterModules.length
+                          ? "Some starter modules are missing"
+                          : "Some students are missing starter modules"}
                       </strong>
-                      <span>{new Date(log.created_at).toLocaleString()}</span>
+                      <span>
+                        Adds any missing folders and assigns Induction and Modules 1–6 to every
+                        active student.
+                      </span>
                     </div>
-                  </article>
-                );
-              })}
-              {!data?.logs.length && (
-                <div className="admin-empty small">
-                  <h2>No activity yet</h2>
-                  <p>Course access will appear here when students open published materials.</p>
-                </div>
-              )}
-            </div>
-          </div>
-        )}
+                    <button
+                      className="brand-button"
+                      type="button"
+                      disabled={busy}
+                      onClick={() => void seedModules()}
+                    >
+                      {busy ? (
+                        <LoaderCircle className="spin" aria-hidden="true" />
+                      ) : (
+                        <Plus aria-hidden="true" />
+                      )}{" "}
+                      Fix now
+                    </button>
+                  </div>
+                ) : (
+                  <p className="settings-note success">
+                    <Check aria-hidden="true" /> Every active student has all starter modules.
+                  </p>
+                )}
+              </SettingsCard>
+            </SettingsPanel>
+          ) : null}
+        </div>
         <p className="admin-footer-note">
           Course materials are protected using private storage, account-based access, and expiring
           links. Screen recording and photography cannot be fully blocked.
         </p>
       </section>
-      {moduleFormOpen && (
-        <ModuleForm
-          item={moduleEditing}
-          preview={preview}
-          onClose={() => setModuleFormOpen(false)}
-          onSave={saveModule}
-        />
-      )}
-      {folderFormOpen && contentFolder && (
-        <FolderForm
-          moduleId={contentFolder.id}
-          parentFolderId={contentSubfolderId}
-          folder={folderEditing}
-          onClose={() => setFolderFormOpen(false)}
-          onSaved={async (input) => {
-            await savePortalFolder({ data: input });
-            setFolderFormOpen(false);
-            setFolderEditing(null);
-            await refresh();
-          }}
-        />
-      )}
-      {showForm && data && (
-        <ContentForm
-          modules={data.modules}
-          item={editing}
-          initialModuleId={contentFolder?.id ?? ""}
-          initialFolderId={contentSubfolderId}
-          preview={preview}
-          onClose={() => setShowForm(false)}
-          onSaved={(message, savedContent) => {
-            setShowForm(false);
-            if (preview) {
-              const savedItem: AdminItem = {
-                id: savedContent.id ?? `preview-content-${crypto.randomUUID()}`,
-                module_id: savedContent.moduleId,
-                folder_id: savedContent.folderId ?? null,
-                type: savedContent.type,
-                title: savedContent.title,
-                description: savedContent.description,
-                storage_path: savedContent.storagePath,
-                position:
-                  data.items.find((item) => item.id === savedContent.id)?.position ??
-                  Math.max(
-                    0,
-                    ...data.items
-                      .filter((item) => item.module_id === savedContent.moduleId)
-                      .map((item) => item.position),
-                  ) + 1,
-                is_hidden: !savedContent.publish,
-                deleted_at: null,
-                created_at:
-                  data.items.find((item) => item.id === savedContent.id)?.created_at ??
-                  new Date().toISOString(),
-              };
-              setData((current) =>
-                current
-                  ? {
-                      ...current,
-                      items: current.items.some((item) => item.id === savedItem.id)
-                        ? current.items.map((item) => (item.id === savedItem.id ? savedItem : item))
-                        : [...current.items, savedItem],
-                    }
-                  : current,
-              );
-            }
-            setNotice(message);
-            if (!preview) void refresh();
-          }}
-        />
-      )}
-      {inviteOpen && data && (
-        <InviteStudentForm
-          modules={data.modules}
-          busy={busy}
-          preview={preview}
-          onClose={() => setInviteOpen(false)}
-          onInvite={inviteStudent}
-        />
-      )}
-      {selectedRegistration && (
-        <RegistrationReviewDialog
-          registration={selectedRegistration}
-          busy={busy}
-          error={dialogError}
-          login={registrationLogin}
-          onClose={() => {
-            setDialogError("");
-            setRegistrationLogin(null);
-            setSelectedRegistration(null);
-          }}
-          onReview={decideRegistration}
-        />
-      )}
-      {studentDialog && data && (
-        <div className="viewer-backdrop">
-          <section
-            className="student-edit-card"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="student-edit-heading"
-          >
-            <header className="viewer-header">
-              <div>
-                <p className="eyebrow">ACCOUNT SETTINGS</p>
-                <h2 id="student-edit-heading">Manage account</h2>
-              </div>
-              <button
-                className="icon-button"
-                type="button"
-                onClick={() => {
-                  setDialogError("");
-                  setStudentDialog(null);
-                }}
-                aria-label="Close"
-                disabled={busy}
-              >
-                <X aria-hidden="true" />
-              </button>
-            </header>
-            <p className="form-hint account-identifier">
-              {studentDialog.email || "Email is unavailable"} · Student ID{" "}
-              {studentDialog.student_id}
-            </p>
-            <form className="admin-form" onSubmit={(event) => void saveStudent(event)}>
-              <label htmlFor="student-name">Full name</label>
-              <input
-                id="student-name"
-                className="portal-input"
-                name="fullName"
-                defaultValue={studentDialog.full_name}
-                required
-              />
-              <label htmlFor="student-role">Account type</label>
-              <select
-                id="student-role"
-                className="portal-input"
-                name="role"
-                defaultValue={studentDialog.role}
-                disabled={studentDialog.id === profile.id}
-              >
-                <option value="student">Student</option>
-                <option value="admin">Administrator</option>
-              </select>
-              <label className="checkbox-label">
-                <input
-                  type="checkbox"
-                  name="active"
-                  defaultChecked={studentDialog.active}
-                  disabled={studentDialog.id === profile.id}
-                />{" "}
-                Allow this account to sign in
-              </label>
-              {studentDialog.id === profile.id && (
-                <p className="form-hint">
-                  Your signed-in administrator account cannot be deactivated or changed to a
-                  student.
-                </p>
-              )}
-              <p className="form-hint">
-                Turning this off blocks sign-in but keeps the account’s course history.
-              </p>
-              <fieldset>
-                <legend>Assigned learning modules</legend>
-                {data.modules.map((module) => (
-                  <label className="checkbox-label" key={module.id}>
-                    <input
-                      type="checkbox"
-                      name="student-module"
-                      value={module.id}
-                      defaultChecked={(assignments[studentDialog.id] ?? []).includes(module.id)}
-                    />{" "}
-                    {module.title}
-                  </label>
-                ))}
-              </fieldset>
-              {dialogError && (
-                <p className="inline-error" role="alert">
-                  {dialogError}
-                </p>
-              )}
-              <div className="form-actions">
+      <Presence>
+        {moduleFormOpen && (
+          <ModuleForm
+            item={moduleEditing}
+            preview={preview}
+            onClose={() => setModuleFormOpen(false)}
+            onSave={saveModule}
+          />
+        )}
+      </Presence>
+      <Presence>
+        {folderFormOpen && contentFolder && (
+          <FolderForm
+            moduleId={contentFolder.id}
+            parentFolderId={contentSubfolderId}
+            folder={folderEditing}
+            onClose={() => setFolderFormOpen(false)}
+            onSaved={async (input) => {
+              await savePortalFolder({ data: input });
+              setFolderFormOpen(false);
+              setFolderEditing(null);
+              await refresh();
+            }}
+          />
+        )}
+      </Presence>
+      <Presence>
+        {showForm && data && (
+          <ContentForm
+            modules={data.modules}
+            item={editing}
+            initialModuleId={contentFolder?.id ?? ""}
+            initialFolderId={contentSubfolderId}
+            preview={preview}
+            onClose={() => setShowForm(false)}
+            onSaved={(message, savedContent) => {
+              setShowForm(false);
+              if (preview) {
+                const savedItem: AdminItem = {
+                  id: savedContent.id ?? `preview-content-${crypto.randomUUID()}`,
+                  module_id: savedContent.moduleId,
+                  folder_id: savedContent.folderId ?? null,
+                  type: savedContent.type,
+                  title: savedContent.title,
+                  description: savedContent.description,
+                  storage_path: savedContent.storagePath,
+                  position:
+                    data.items.find((item) => item.id === savedContent.id)?.position ??
+                    Math.max(
+                      0,
+                      ...data.items
+                        .filter((item) => item.module_id === savedContent.moduleId)
+                        .map((item) => item.position),
+                    ) + 1,
+                  is_hidden: !savedContent.publish,
+                  deleted_at: null,
+                  created_at:
+                    data.items.find((item) => item.id === savedContent.id)?.created_at ??
+                    new Date().toISOString(),
+                };
+                setData((current) =>
+                  current
+                    ? {
+                        ...current,
+                        items: current.items.some((item) => item.id === savedItem.id)
+                          ? current.items.map((item) =>
+                              item.id === savedItem.id ? savedItem : item,
+                            )
+                          : [...current.items, savedItem],
+                      }
+                    : current,
+                );
+              }
+              setNotice(message);
+              if (!preview) void refresh();
+            }}
+          />
+        )}
+      </Presence>
+      <Presence>
+        {inviteOpen && data && (
+          <InviteStudentForm
+            modules={data.modules}
+            busy={busy}
+            preview={preview}
+            onClose={() => setInviteOpen(false)}
+            onInvite={inviteStudent}
+          />
+        )}
+      </Presence>
+      <Presence>
+        {selectedRegistration && (
+          <RegistrationReviewDialog
+            registration={selectedRegistration}
+            busy={busy}
+            error={dialogError}
+            login={registrationLogin}
+            onClose={() => {
+              setDialogError("");
+              setRegistrationLogin(null);
+              setSelectedRegistration(null);
+            }}
+            onReview={decideRegistration}
+          />
+        )}
+      </Presence>
+      <Presence>
+        {studentDialog && data && (
+          <div className="viewer-backdrop">
+            <section
+              className="student-edit-card"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="student-edit-heading"
+            >
+              <header className="viewer-header">
+                <div>
+                  <p className="eyebrow">ACCOUNT SETTINGS</p>
+                  <h2 id="student-edit-heading">Manage account</h2>
+                </div>
                 <button
-                  className="outline-button"
+                  className="icon-button"
                   type="button"
                   onClick={() => {
                     setDialogError("");
                     setStudentDialog(null);
                   }}
+                  aria-label="Close"
                   disabled={busy}
                 >
-                  Cancel
+                  <X aria-hidden="true" />
                 </button>
-                <button className="brand-button" type="submit" disabled={busy}>
-                  {busy && <LoaderCircle className="spin" aria-hidden="true" />} Save changes
+              </header>
+              <p className="form-hint account-identifier">
+                {studentDialog.email || "Email is unavailable"} · Student ID{" "}
+                {studentDialog.student_id}
+              </p>
+              <form className="admin-form" onSubmit={(event) => void saveStudent(event)}>
+                <label htmlFor="student-name">Full name</label>
+                <input
+                  id="student-name"
+                  className="portal-input"
+                  name="fullName"
+                  defaultValue={studentDialog.full_name}
+                  required
+                />
+                <label htmlFor="student-role">Account type</label>
+                <select
+                  id="student-role"
+                  className="portal-input"
+                  name="role"
+                  defaultValue={studentDialog.role}
+                  disabled={studentDialog.id === profile.id}
+                >
+                  <option value="student">Student</option>
+                  <option value="admin">Administrator</option>
+                </select>
+                <label className="checkbox-label">
+                  <input
+                    type="checkbox"
+                    name="active"
+                    defaultChecked={studentDialog.active}
+                    disabled={studentDialog.id === profile.id}
+                  />{" "}
+                  Allow this account to sign in
+                </label>
+                {studentDialog.id === profile.id && (
+                  <p className="form-hint">
+                    Your signed-in administrator account cannot be deactivated or changed to a
+                    student.
+                  </p>
+                )}
+                <p className="form-hint">
+                  Turning this off blocks sign-in but keeps the account’s course history.
+                </p>
+                <fieldset>
+                  <legend>Assigned learning modules</legend>
+                  {data.modules.map((module) => (
+                    <label className="checkbox-label" key={module.id}>
+                      <input
+                        type="checkbox"
+                        name="student-module"
+                        value={module.id}
+                        defaultChecked={(assignments[studentDialog.id] ?? []).includes(module.id)}
+                      />{" "}
+                      {module.title}
+                    </label>
+                  ))}
+                </fieldset>
+                {studentDialog.role === "student" && (
+                  <div className="password-reset-panel">
+                    <div>
+                      <strong>Password</strong>
+                      <span>
+                        {studentDialog.password_reset_requested_at
+                          ? "This student has asked for a password reset."
+                          : studentDialog.must_change_password
+                            ? "They haven’t created their own password yet."
+                            : "Allow a reset if they have forgotten it."}
+                      </span>
+                    </div>
+                    <button
+                      className="outline-button"
+                      type="button"
+                      onClick={() => {
+                        const student = studentDialog;
+                        setDialogError("");
+                        setStudentDialog(null);
+                        setPasswordLogin(null);
+                        setPasswordDialog(student);
+                      }}
+                      disabled={busy}
+                    >
+                      <KeyRound aria-hidden="true" />{" "}
+                      {studentDialog.password_reset_requested_at ? "Review request" : "Reset…"}
+                    </button>
+                  </div>
+                )}
+                {dialogError && (
+                  <p className="inline-error" role="alert">
+                    {dialogError}
+                  </p>
+                )}
+                <div className="form-actions">
+                  <button
+                    className="outline-button"
+                    type="button"
+                    onClick={() => {
+                      setDialogError("");
+                      setStudentDialog(null);
+                    }}
+                    disabled={busy}
+                  >
+                    Cancel
+                  </button>
+                  <button className="brand-button" type="submit" disabled={busy}>
+                    {busy && <LoaderCircle className="spin" aria-hidden="true" />} Save changes
+                  </button>
+                </div>
+              </form>
+            </section>
+          </div>
+        )}
+      </Presence>
+      <Presence>
+        {passwordDialog && (
+          <PasswordResetDialog
+            student={passwordDialog}
+            busy={busy}
+            error={dialogError}
+            login={passwordLogin}
+            onClose={() => {
+              setDialogError("");
+              setPasswordLogin(null);
+              setPasswordDialog(null);
+            }}
+            onDecide={decidePasswordReset}
+          />
+        )}
+      </Presence>
+      <Presence>
+        {paletteOpen && (
+          <CommandPalette items={commandItems} onClose={() => setPaletteOpen(false)} />
+        )}
+      </Presence>
+    </div>
+  );
+}
+
+function PasswordResetDialog({
+  student,
+  busy,
+  error,
+  login,
+  onClose,
+  onDecide,
+}: {
+  student: AdminProfile;
+  busy: boolean;
+  error: string;
+  login: LoginDetails | null;
+  onClose: () => void;
+  onDecide: (action: "approve" | "decline") => Promise<void>;
+}) {
+  const [copied, setCopied] = useState(false);
+  const requested = student.password_reset_requested_at;
+
+  async function copyLoginDetails() {
+    if (!login) return;
+    const details = [
+      `Student: ${login.name}`,
+      `Login: ${login.email}`,
+      `Student ID: ${login.studentId}`,
+      `Temporary password: ${login.temporaryPassword}`,
+      `Sign in: ${window.location.origin}${login.loginPath}`,
+      "You will be asked to create your own password when you sign in.",
+    ].join("\n");
+    await navigator.clipboard.writeText(details);
+    setCopied(true);
+  }
+
+  return (
+    <div
+      className="viewer-backdrop"
+      role="presentation"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget && !busy) onClose();
+      }}
+    >
+      <section
+        className="student-edit-card"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="password-reset-title"
+      >
+        <header className="viewer-header">
+          <div>
+            <p className="eyebrow">PASSWORD RESET</p>
+            <h2 id="password-reset-title">{student.full_name}</h2>
+          </div>
+          <button
+            className="icon-button"
+            type="button"
+            onClick={onClose}
+            aria-label="Close"
+            disabled={busy}
+          >
+            <X aria-hidden="true" />
+          </button>
+        </header>
+        <div className="admin-form">
+          {login ? (
+            <section className="registration-credentials" role="status">
+              <span className="message-icon">
+                <Check aria-hidden="true" />
+              </span>
+              <div>
+                <p className="eyebrow">NEW TEMPORARY PASSWORD</p>
+                <h3>Send these details to the student</h3>
+                <p>
+                  Shown only once. The student must create their own password the next time they
+                  sign in, and their old password no longer works.
+                </p>
+              </div>
+              <dl>
+                <div>
+                  <dt>Email / login</dt>
+                  <dd>{login.email || "—"}</dd>
+                </div>
+                <div>
+                  <dt>Temporary password</dt>
+                  <dd className="registration-password">{login.temporaryPassword}</dd>
+                </div>
+              </dl>
+              <button
+                className="brand-button"
+                type="button"
+                onClick={() => void copyLoginDetails()}
+              >
+                {copied ? <Check aria-hidden="true" /> : <FileText aria-hidden="true" />}
+                {copied ? "Copied" : "Copy login details"}
+              </button>
+            </section>
+          ) : (
+            <>
+              <p className="form-hint account-identifier">
+                {student.email || "Email is unavailable"} · Student ID {student.student_id}
+              </p>
+              {requested ? (
+                <div className="reset-request-note">
+                  <strong>Asked {new Date(requested).toLocaleString()}</strong>
+                  <span>
+                    {student.password_reset_note
+                      ? `“${student.password_reset_note}”`
+                      : "No message was added."}
+                  </span>
+                </div>
+              ) : null}
+              <p className="form-hint">
+                Allowing a reset replaces their current password with a temporary one that you pass
+                on to them. They’ll be asked to choose their own password at their next sign-in.
+                Only approve requests you trust came from the student.
+              </p>
+              {error && (
+                <p className="inline-error" role="alert">
+                  {error}
+                </p>
+              )}
+              <div className="form-actions">
+                {requested ? (
+                  <button
+                    className="danger-outline-button"
+                    type="button"
+                    onClick={() => void onDecide("decline")}
+                    disabled={busy}
+                  >
+                    Decline
+                  </button>
+                ) : (
+                  <button
+                    className="outline-button"
+                    type="button"
+                    onClick={onClose}
+                    disabled={busy}
+                  >
+                    Cancel
+                  </button>
+                )}
+                <button
+                  className="brand-button"
+                  type="button"
+                  onClick={() => void onDecide("approve")}
+                  disabled={busy}
+                >
+                  {busy ? (
+                    <LoaderCircle className="spin" aria-hidden="true" />
+                  ) : (
+                    <KeyRound aria-hidden="true" />
+                  )}{" "}
+                  Allow reset
                 </button>
               </div>
-            </form>
-          </section>
+            </>
+          )}
         </div>
-      )}
+      </section>
     </div>
   );
 }
@@ -3525,6 +4661,7 @@ function RegistrationReviewDialog({
       `Student ID: ${login.studentId}`,
       `Temporary password: ${login.temporaryPassword}`,
       `Sign in: ${window.location.origin}${login.loginPath}`,
+      "You will be asked to create your own password when you first sign in.",
     ].join("\n");
     await navigator.clipboard.writeText(details);
     setCopied(true);
@@ -3577,6 +4714,8 @@ function RegistrationReviewDialog({
                 <h3>Send these details to the student now</h3>
                 <p>
                   This temporary password is shown only once. Copy it before closing this window.
+                  The student will be asked to create their own password the first time they sign
+                  in.
                 </p>
               </div>
               <dl>
@@ -3792,15 +4931,36 @@ function RegistrationReviewDialog({
   );
 }
 
-function StatCard({ label, value, icon }: { label: string; value: string; icon: ReactNode }) {
-  return (
-    <article className="stat-card">
+function StatCard({
+  label,
+  value,
+  icon,
+  onOpen,
+  highlight = false,
+}: {
+  label: string;
+  value: string;
+  icon: ReactNode;
+  onOpen?: () => void;
+  highlight?: boolean;
+}) {
+  const content = (
+    <>
       <span className="stat-icon">{icon}</span>
       <div>
-        <strong>{value}</strong>
+        <strong>{/^\d+$/.test(value) ? <AnimatedNumber value={Number(value)} /> : value}</strong>
         <span>{label}</span>
       </div>
-    </article>
+      {onOpen && <ArrowRight className="stat-arrow" aria-hidden="true" />}
+    </>
+  );
+  const className = `stat-card${highlight ? " highlight" : ""}`;
+  return onOpen ? (
+    <button className={className} type="button" onClick={onOpen}>
+      {content}
+    </button>
+  ) : (
+    <article className={className}>{content}</article>
   );
 }
 

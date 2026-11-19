@@ -2656,7 +2656,7 @@
     box-shadow 180ms ease;
 }
 .portal-shell :is(.student-page, .module-page, .admin-layout, .login-hero-inner) {
-  animation: portal-screen-enter 520ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+  animation: portal-screen-enter 520ms cubic-bezier(0.2, 0.8, 0.2, 1) backwards;
 }
 .portal-shell
   :is(
@@ -2679,11 +2679,11 @@
 .course-folder-card,
 .stat-card,
 .quick-actions > button {
-  animation: portal-card-enter 560ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+  animation: portal-card-enter 560ms cubic-bezier(0.2, 0.8, 0.2, 1) backwards;
 }
 .portal-toast {
   border-radius: var(--portal-radius-control);
-  animation: portal-toast-enter 260ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+  animation: portal-toast-enter 260ms cubic-bezier(0.2, 0.8, 0.2, 1) backwards;
 }
 
 .student-page {
@@ -5798,5 +5798,1536 @@
   .registration-success {
     min-height: 390px;
     padding: 28px 20px;
+  }
+}
+
+/* ==========================================================================
+   Motion system
+   One easing family and a short list of durations keep every transition
+   consistent. Only transform, opacity and other compositor-friendly
+   properties are animated; the global prefers-reduced-motion rule above
+   collapses all of it for users who ask for less motion.
+   ========================================================================== */
+:root {
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-out-cubic: cubic-bezier(0.215, 0.61, 0.355, 1);
+  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --dur-fast: 160ms;
+  --dur-base: 240ms;
+  --dur-slow: 560ms;
+}
+
+@property --progress {
+  syntax: "<percentage>";
+  inherits: false;
+  initial-value: 0%;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  html {
+    scroll-behavior: smooth;
+  }
+}
+
+@keyframes motion-fade-in {
+  from {
+    opacity: 0;
+  }
+}
+@keyframes motion-fade-out {
+  to {
+    opacity: 0;
+  }
+}
+@keyframes motion-fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+}
+@keyframes motion-pop-in {
+  from {
+    opacity: 0;
+    transform: translateY(18px) scale(0.97);
+  }
+}
+@keyframes motion-pop-out {
+  to {
+    opacity: 0;
+    transform: translateY(10px) scale(0.98);
+  }
+}
+@keyframes motion-toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(16px) scale(0.96);
+  }
+}
+@keyframes motion-toast-out {
+  to {
+    opacity: 0;
+    transform: translateX(24px) scale(0.98);
+  }
+}
+@keyframes motion-collapse-in {
+  from {
+    max-height: 0;
+    margin-top: 0;
+    padding-block: 0;
+    opacity: 0;
+  }
+  to {
+    max-height: 240px;
+  }
+}
+@keyframes motion-collapse-out {
+  from {
+    max-height: 240px;
+  }
+  to {
+    max-height: 0;
+    margin-top: 0;
+    padding-block: 0;
+    opacity: 0;
+  }
+}
+@keyframes motion-grow-x {
+  from {
+    transform: scaleX(0);
+  }
+}
+@keyframes motion-ring-fill {
+  from {
+    --progress: 0%;
+  }
+}
+@keyframes motion-stripe-in {
+  from {
+    opacity: 0;
+    translate: 14% 0;
+  }
+}
+@keyframes motion-icon-pop {
+  from {
+    opacity: 0;
+    scale: 0.4;
+  }
+}
+@keyframes motion-draw {
+  from {
+    stroke-dashoffset: 40;
+  }
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+/* Dialogs and toasts: Presence keeps them mounted while the exit plays. */
+.presence {
+  display: contents;
+}
+.presence[data-closing] {
+  pointer-events: none;
+}
+.viewer-backdrop:not(.registration-review-backdrop) {
+  backdrop-filter: blur(4px);
+}
+.viewer-backdrop {
+  animation: motion-fade-in var(--dur-base) var(--ease-out) backwards;
+}
+:is(.viewer-panel, .content-form-card, .student-edit-card, .registration-review-card) {
+  animation: motion-pop-in 380ms var(--ease-out) backwards;
+}
+.presence[data-closing] .viewer-backdrop {
+  animation: motion-fade-out 200ms var(--ease-in-out) forwards;
+}
+.presence[data-closing]
+  :is(.viewer-panel, .content-form-card, .student-edit-card, .registration-review-card) {
+  animation: motion-pop-out 200ms var(--ease-in-out) forwards;
+}
+.viewer-content > * {
+  animation: motion-fade-in 480ms var(--ease-out) 80ms backwards;
+}
+.portal-toast {
+  animation: motion-toast-in 380ms var(--ease-out) backwards;
+}
+.presence[data-closing] > .portal-toast {
+  animation: motion-toast-out 220ms var(--ease-in-out) forwards;
+}
+.admin-notice {
+  overflow: hidden;
+  animation: motion-collapse-in 360ms var(--ease-out) backwards;
+}
+.presence[data-closing] > .admin-notice {
+  animation: motion-collapse-out 240ms var(--ease-in-out) forwards;
+}
+
+/* Views and tab panels */
+.admin-tab-panel {
+  animation: motion-fade-in 320ms var(--ease-out) backwards;
+}
+.login-card-heading,
+.login-card form {
+  animation: motion-fade-up 420ms var(--ease-out) backwards;
+}
+.login-card {
+  animation: motion-pop-in 640ms var(--ease-out) 160ms backwards;
+}
+.login-story > * {
+  animation: motion-fade-up 640ms var(--ease-out) backwards;
+}
+.login-story > :nth-child(2) {
+  animation-delay: 80ms;
+}
+.login-story > :nth-child(3) {
+  animation-delay: 160ms;
+}
+.login-story > :nth-child(4) {
+  animation-delay: 240ms;
+}
+.login-trust-points > span {
+  animation: motion-fade-up 520ms var(--ease-out) calc(360ms + var(--i, 0) * 90ms) backwards;
+}
+.hero-stripe {
+  animation: motion-stripe-in 1000ms var(--ease-out) 120ms backwards;
+}
+.portal-loading img {
+  animation: motion-fade-up 640ms var(--ease-out) backwards;
+}
+.portal-loading p {
+  animation: motion-fade-in 640ms var(--ease-out) 200ms backwards;
+}
+.dashboard-hero-copy > * {
+  animation: motion-fade-up 640ms var(--ease-out) backwards;
+}
+.dashboard-hero-copy > :nth-child(2) {
+  animation-delay: 70ms;
+}
+.dashboard-hero-copy > :nth-child(3) {
+  animation-delay: 140ms;
+}
+.dashboard-hero-copy > :nth-child(4) {
+  animation-delay: 210ms;
+}
+.student-id {
+  animation: motion-fade-up 700ms var(--ease-out) 260ms backwards;
+}
+.student-progress-ring {
+  background: conic-gradient(var(--brand-orange) var(--progress, 0%), oklch(1 0 0 / 16%) 0);
+  transition: --progress 700ms var(--ease-out-cubic);
+  animation: motion-ring-fill 900ms var(--ease-out-cubic) 300ms backwards;
+}
+.progress-track > span {
+  transform-origin: left center;
+  transition: width 600ms var(--ease-out);
+  animation: motion-grow-x 900ms var(--ease-out-cubic) calc(260ms + var(--i, 0) * 70ms) backwards;
+}
+:is(.empty-state, .admin-empty, .portal-message-card, .terms-card, .registration-success) {
+  animation: motion-pop-in 520ms var(--ease-out) backwards;
+}
+.empty-icon,
+.message-icon {
+  animation: motion-icon-pop 560ms var(--ease-spring) 160ms backwards;
+}
+.registration-success .message-icon svg path {
+  stroke-dasharray: 40;
+  animation: motion-draw 480ms var(--ease-out) 520ms backwards;
+}
+.registration-page {
+  animation: motion-fade-up 560ms var(--ease-out) backwards;
+}
+:is(.inline-error, .admin-error, .registration-error, .document-read-error) {
+  animation: motion-fade-up 300ms var(--ease-out) backwards;
+}
+
+/* Staggered entrance for lists and grids; later siblings share the longest delay. */
+:is(
+  .module-card,
+  .course-folder-card,
+  .stat-card,
+  .quick-actions > button,
+  .module-browser-item,
+  .registration-form-section,
+  .student-row,
+  .activity-row,
+  .content-admin-row,
+  .registration-admin-row,
+  .content-row,
+  .login-trust-points > span
+) {
+  --i: 0;
+
+  &:nth-child(2) {
+    --i: 1;
+  }
+  &:nth-child(3) {
+    --i: 2;
+  }
+  &:nth-child(4) {
+    --i: 3;
+  }
+  &:nth-child(5) {
+    --i: 4;
+  }
+  &:nth-child(n + 6) {
+    --i: 5;
+  }
+}
+:is(
+  .course-folder-card,
+  .stat-card,
+  .quick-actions > button,
+  .module-browser-item,
+  .registration-form-section
+) {
+  animation: portal-card-enter 560ms var(--ease-out) calc(var(--i) * 60ms) backwards;
+}
+:is(.student-row, .activity-row, .content-admin-row, .registration-admin-row, .content-row) {
+  animation: motion-fade-up 480ms var(--ease-out) calc(var(--i) * 50ms) backwards;
+}
+
+/* Interaction feedback */
+.portal-shell
+  :is(
+    .materials-tabs button,
+    .admin-sidebar nav button,
+    .status-pill,
+    .module-completion,
+    .text-button,
+    .recovery-link,
+    .registration-link,
+    .module-browser-item-icon,
+    .content-row,
+    .student-row,
+    .content-admin-row,
+    .activity-row,
+    .registration-admin-row,
+    .portal-toast button,
+    .admin-notice button
+  ) {
+  transition:
+    transform var(--dur-base) var(--ease-out),
+    color var(--dur-base) ease,
+    background-color var(--dur-base) ease,
+    border-color var(--dur-base) ease,
+    box-shadow var(--dur-base) var(--ease-out),
+    opacity var(--dur-base) ease;
+}
+.portal-shell :is(.brand-button, .outline-button, .danger-outline-button, .icon-button) svg,
+.portal-shell :is(.back-link, .folder-back, .summary-link, .registration-link) svg,
+.module-browser-item-footer > svg,
+.module-art > svg {
+  transition: transform var(--dur-base) var(--ease-out);
+}
+:is(.search-field, .input-with-icon) {
+  transition:
+    border-color var(--dur-base) ease,
+    box-shadow var(--dur-base) ease,
+    background-color var(--dur-base) ease;
+}
+:is(.portal-input, .input-with-icon input, .registration-field input, .registration-field select) {
+  transition:
+    border-color var(--dur-base) ease,
+    box-shadow var(--dur-base) ease,
+    background-color var(--dur-base) ease;
+}
+.materials-tabs button {
+  position: relative;
+}
+.materials-tabs button::after {
+  position: absolute;
+  right: 0;
+  bottom: -2px;
+  left: 0;
+  height: 2px;
+  background: var(--brand-orange);
+  content: "";
+  transform: scaleX(0);
+  transition: transform 320ms var(--ease-out);
+}
+.materials-tabs button.active {
+  border-bottom-color: transparent;
+}
+.materials-tabs button.active::after {
+  transform: scaleX(1);
+}
+.admin-sidebar nav button {
+  box-shadow: inset 0 0 var(--brand-orange);
+}
+.admin-sidebar nav button.active {
+  box-shadow: inset 3px 0 var(--brand-orange);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .module-card:hover .module-art > svg,
+  .module-browser-item:hover:not(:disabled) .module-browser-item-icon {
+    transform: scale(1.1) rotate(-4deg);
+  }
+  .brand-button:hover:not(:disabled) svg.lucide-arrow-right,
+  .module-browser-item:hover:not(:disabled) .module-browser-item-footer > svg,
+  .registration-link:hover svg.lucide-arrow-right,
+  .course-folder-card:hover svg.lucide-arrow-right {
+    transform: translateX(4px);
+  }
+  .back-link:hover svg.lucide-arrow-left,
+  .folder-back:hover svg.lucide-arrow-left,
+  .module-parent-button:hover svg.lucide-arrow-left {
+    transform: translateX(-4px);
+  }
+  .admin-sidebar nav button:hover svg {
+    transform: scale(1.12);
+  }
+  .portal-toast button:hover,
+  .admin-notice button:hover {
+    transform: rotate(90deg);
+  }
+  .portal-shell
+    :is(
+      .brand-button,
+      .outline-button,
+      .danger-outline-button,
+      .icon-button,
+      .module-browser-item,
+      .quick-actions > button
+    ):active:not(:disabled) {
+    transform: translateY(0) scale(0.98);
+    transition-duration: 90ms;
+  }
+  .materials-tabs button:hover:not(.active) {
+    color: var(--brand-blue);
+  }
+}
+@media (hover: hover) {
+  .student-row:hover,
+  .content-admin-row:hover,
+  .activity-row:hover,
+  .registration-admin-row:hover {
+    background-color: oklch(0.985 0.006 232);
+  }
+}
+
+/* ==========================================================================
+   Admin experience
+   ========================================================================== */
+.admin-sidebar-inner {
+  position: sticky;
+  top: 16px;
+  display: flex;
+  min-height: min(620px, calc(100vh - 32px));
+  flex-direction: column;
+}
+.admin-sidebar-inner > .eyebrow {
+  padding: 0 12px;
+  color: var(--brand-orange);
+}
+.admin-topline-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.admin-search-trigger {
+  display: inline-flex;
+  min-height: 40px;
+  align-items: center;
+  gap: 9px;
+  padding: 0 10px 0 12px;
+  border: 1px solid oklch(0.88 0.012 255);
+  border-radius: 999px;
+  background: white;
+  color: oklch(0.5 0 0);
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.82rem;
+  transition:
+    border-color var(--dur-base) ease,
+    box-shadow var(--dur-base) ease,
+    color var(--dur-base) ease;
+}
+.admin-search-trigger:hover {
+  border-color: oklch(0.696 0.172 232 / 55%);
+  box-shadow: 0 0 0 3px oklch(0.696 0.172 232 / 12%);
+  color: var(--brand-charcoal);
+}
+.admin-search-trigger svg {
+  width: 16px;
+  height: 16px;
+}
+kbd {
+  padding: 2px 6px;
+  border: 1px solid oklch(0.88 0 0);
+  border-bottom-width: 2px;
+  border-radius: 5px;
+  background: oklch(0.97 0 0);
+  color: oklch(0.45 0 0);
+  font: inherit;
+  font-size: 0.68rem;
+  font-weight: 700;
+  line-height: 1.3;
+}
+.admin-filterbar {
+  display: grid;
+  gap: 12px;
+  padding: 14px 16px;
+  border-bottom: 1px solid oklch(0.93 0 0);
+  background: oklch(0.99 0.004 255);
+}
+.admin-filterbar .admin-search {
+  width: 100%;
+  max-width: 420px;
+}
+.admin-search > button {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  flex: 0 0 auto;
+  place-items: center;
+  border: 0;
+  border-radius: 50%;
+  background: oklch(0.94 0 0);
+  color: oklch(0.45 0 0);
+  cursor: pointer;
+}
+.admin-search > button svg {
+  width: 14px;
+  height: 14px;
+}
+.filter-chips {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  padding-bottom: 2px;
+  scrollbar-width: none;
+}
+.filter-chips::-webkit-scrollbar {
+  display: none;
+}
+.filter-chips button {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 7px;
+  min-height: 34px;
+  padding: 0 13px;
+  border: 1px solid oklch(0.89 0.01 255);
+  border-radius: 999px;
+  background: white;
+  color: oklch(0.42 0 0);
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.8rem;
+  font-weight: 600;
+  transition:
+    background-color var(--dur-base) ease,
+    border-color var(--dur-base) ease,
+    color var(--dur-base) ease,
+    transform 90ms ease;
+}
+.filter-chips button:hover {
+  border-color: oklch(0.696 0.172 232 / 55%);
+  color: var(--brand-blue);
+}
+.filter-chips button:active {
+  transform: scale(0.96);
+}
+.filter-chips button.active {
+  border-color: var(--brand-charcoal);
+  background: var(--brand-charcoal);
+  color: white;
+}
+.filter-chips button span {
+  min-width: 20px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: oklch(0.94 0 0);
+  color: oklch(0.4 0 0);
+  font-size: 0.7rem;
+  text-align: center;
+}
+.filter-chips button.active span {
+  background: oklch(1 0 0 / 20%);
+  color: white;
+}
+button.stat-card {
+  width: 100%;
+  background: white;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+}
+.stat-card.highlight {
+  border-color: oklch(0.747 0.155 72 / 60%);
+  background: oklch(0.985 0.02 72);
+}
+.stat-card.highlight .stat-icon {
+  background: oklch(0.93 0.07 72);
+  color: oklch(0.5 0.12 60);
+}
+.stat-arrow {
+  width: 16px;
+  height: 16px;
+  margin-left: auto;
+  color: oklch(0.65 0 0);
+  transition:
+    transform var(--dur-base) var(--ease-out),
+    color var(--dur-base) ease;
+}
+button.stat-card:hover .stat-arrow {
+  color: var(--brand-blue);
+  transform: translateX(4px);
+}
+.attention-panel {
+  margin-top: 26px;
+}
+.attention-list {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.attention-list li {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 14px 16px;
+  border: 1px solid oklch(0.88 0.06 72);
+  border-left: 4px solid var(--brand-orange);
+  border-radius: 8px;
+  background: oklch(0.99 0.015 72);
+}
+.attention-list li > div {
+  display: grid;
+  min-width: 0;
+  flex: 1;
+  gap: 2px;
+}
+.attention-list li span:not(.attention-icon) {
+  color: oklch(0.45 0 0);
+  font-size: 0.8rem;
+}
+.attention-icon {
+  display: grid;
+  width: 38px;
+  height: 38px;
+  flex: 0 0 auto;
+  place-items: center;
+  border-radius: 50%;
+  background: oklch(0.93 0.07 72);
+  color: oklch(0.5 0.12 60);
+}
+.attention-icon svg {
+  width: 19px;
+  height: 19px;
+}
+.attention-clear {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0;
+  padding: 14px 16px;
+  border-radius: 8px;
+  background: oklch(0.96 0.035 152);
+  color: oklch(0.38 0.1 152);
+  font-size: 0.86rem;
+}
+.attention-clear svg {
+  width: 18px;
+  height: 18px;
+}
+
+/* Loading skeleton */
+@keyframes motion-shimmer {
+  to {
+    background-position: -200% 0;
+  }
+}
+.admin-skeleton .admin-sidebar-inner {
+  min-height: 0;
+  gap: 10px;
+}
+.admin-skeleton .admin-content {
+  display: grid;
+  align-content: start;
+  gap: 16px;
+}
+.skeleton-line,
+.skeleton-block {
+  display: block;
+  border-radius: 8px;
+  background: linear-gradient(
+    90deg,
+    oklch(0.94 0 0) 25%,
+    oklch(0.975 0 0) 50%,
+    oklch(0.94 0 0) 75%
+  );
+  background-size: 200% 100%;
+  animation: motion-shimmer 1.4s linear infinite;
+}
+.admin-skeleton .admin-sidebar .skeleton-line {
+  background: linear-gradient(
+    90deg,
+    oklch(1 0 0 / 8%) 25%,
+    oklch(1 0 0 / 16%) 50%,
+    oklch(1 0 0 / 8%) 75%
+  );
+  background-size: 200% 100%;
+}
+.skeleton-line.nav {
+  height: 42px;
+}
+.skeleton-line.title {
+  width: min(280px, 60%);
+  height: 34px;
+}
+.skeleton-line.row {
+  height: 64px;
+}
+.skeleton-stats {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+.skeleton-block {
+  height: 92px;
+}
+
+/* Command palette */
+.viewer-backdrop.command-backdrop {
+  align-items: start;
+  padding-top: min(14vh, 120px);
+}
+.command-palette {
+  width: min(620px, 100%);
+  max-height: min(520px, 76dvh);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border-radius: 16px;
+  background: white;
+  box-shadow: 0 24px 80px oklch(0 0 0 / 35%);
+  animation: motion-pop-in 260ms var(--ease-out) backwards;
+}
+.presence[data-closing] .command-palette {
+  animation: motion-pop-out 160ms var(--ease-in-out) forwards;
+}
+.command-input {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0 16px;
+  border-bottom: 1px solid oklch(0.92 0 0);
+}
+.command-input > svg {
+  width: 19px;
+  height: 19px;
+  flex: 0 0 auto;
+  color: oklch(0.55 0 0);
+}
+.command-input input {
+  min-width: 0;
+  flex: 1;
+  height: 56px;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  font: inherit;
+  font-size: 1rem;
+}
+.command-results {
+  overflow-y: auto;
+  padding: 8px;
+  overscroll-behavior: contain;
+}
+.command-group {
+  margin: 10px 10px 4px;
+  color: oklch(0.5 0 0);
+  font-size: 0.66rem;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+.command-results [role="option"] {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 12px;
+  padding: 9px 10px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+}
+.command-results [role="option"].active {
+  background: oklch(0.96 0.03 232);
+}
+.command-icon {
+  display: grid;
+  width: 34px;
+  height: 34px;
+  flex: 0 0 auto;
+  place-items: center;
+  border-radius: 9px;
+  background: oklch(0.95 0.01 255);
+  color: var(--brand-blue);
+}
+.command-icon svg {
+  width: 17px;
+  height: 17px;
+}
+.command-copy {
+  display: grid;
+  min-width: 0;
+  flex: 1;
+  gap: 1px;
+}
+.command-copy strong {
+  overflow: hidden;
+  font-size: 0.88rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.command-copy small {
+  overflow: hidden;
+  color: oklch(0.5 0 0);
+  font-size: 0.74rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.command-results [role="option"] > svg {
+  width: 16px;
+  height: 16px;
+  color: oklch(0.55 0 0);
+}
+.command-empty {
+  margin: 0;
+  padding: 28px 16px;
+  color: oklch(0.5 0 0);
+  text-align: center;
+}
+.command-footer {
+  display: flex;
+  gap: 18px;
+  margin: 0;
+  padding: 10px 16px;
+  border-top: 1px solid oklch(0.92 0 0);
+  background: oklch(0.985 0 0);
+  color: oklch(0.5 0 0);
+  font-size: 0.74rem;
+}
+@media (max-width: 900px) {
+  .skeleton-stats {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+@media (max-width: 680px) {
+  .admin-topline {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .admin-topline-actions {
+    width: 100%;
+  }
+  .admin-topline-actions .brand-button {
+    flex: 1;
+  }
+  .admin-search-trigger {
+    min-width: 44px;
+    min-height: 44px;
+    padding: 0 14px;
+  }
+  .admin-search-trigger:not(:only-child) {
+    padding: 0;
+    justify-content: center;
+  }
+  .admin-search-trigger:not(:only-child) span,
+  .admin-search-trigger kbd,
+  .command-footer {
+    display: none;
+  }
+  .admin-search-trigger:only-child {
+    flex: 1;
+  }
+  .attention-list li {
+    flex-wrap: wrap;
+  }
+  .attention-list li > div {
+    flex-basis: calc(100% - 60px);
+  }
+  .attention-list li .outline-button {
+    width: 100%;
+    margin-left: 52px;
+  }
+  .viewer-backdrop.command-backdrop {
+    align-items: start;
+    padding: 0;
+  }
+  .command-palette {
+    width: 100%;
+    max-height: 100dvh;
+    border-radius: 0 0 16px 16px;
+  }
+  .skeleton-stats {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* ==========================================================================
+   Password setup and reset
+   ========================================================================== */
+.password-setup {
+  width: min(620px, calc(100% - 32px));
+}
+.password-setup > div:last-child {
+  min-width: 0;
+  flex: 1;
+}
+.password-setup-form {
+  display: grid;
+  gap: 8px;
+  margin-top: 18px;
+}
+.password-setup-form > label {
+  margin-top: 6px;
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+.password-setup-form .brand-button {
+  justify-self: start;
+  margin-top: 12px;
+}
+.password-field {
+  position: relative;
+}
+.password-field .portal-input {
+  width: 100%;
+  padding-right: 48px;
+}
+.password-toggle {
+  position: absolute;
+  top: 50%;
+  right: 6px;
+  display: grid;
+  width: 40px;
+  height: 40px;
+  place-items: center;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: oklch(0.5 0 0);
+  cursor: pointer;
+  transform: translateY(-50%);
+}
+.password-toggle:hover {
+  color: var(--brand-blue);
+}
+.password-toggle svg {
+  width: 18px;
+  height: 18px;
+}
+.password-checks {
+  display: grid;
+  gap: 6px;
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+}
+.password-checks li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: oklch(0.55 0 0);
+  font-size: 0.8rem;
+  transition: color var(--dur-base) ease;
+}
+.password-checks li svg {
+  width: 16px;
+  height: 16px;
+  padding: 2px;
+  border-radius: 50%;
+  background: oklch(0.93 0 0);
+  color: transparent;
+  transition:
+    background-color var(--dur-base) ease,
+    color var(--dur-base) ease,
+    transform var(--dur-base) var(--ease-spring);
+}
+.password-checks li.met {
+  color: oklch(0.38 0.1 152);
+}
+.password-checks li.met svg {
+  background: oklch(0.62 0.15 152);
+  color: white;
+  transform: scale(1.12);
+}
+.admin-form > .account-identifier {
+  padding-inline: 0;
+}
+.reset-request-sent {
+  display: grid;
+  justify-items: start;
+  gap: 8px;
+  padding-block: 8px;
+  animation: motion-fade-up 420ms var(--ease-out) backwards;
+}
+.reset-request-sent h3 {
+  margin: 4px 0 0;
+  font-size: 1.15rem;
+}
+.reset-request-sent p {
+  margin: 0;
+  color: oklch(0.45 0 0);
+  font-size: 0.88rem;
+  line-height: 1.6;
+}
+.reset-request-note {
+  display: grid;
+  gap: 4px;
+  padding: 12px 14px;
+  border-left: 3px solid var(--brand-orange);
+  border-radius: 6px;
+  background: oklch(0.97 0.02 72);
+  font-size: 0.84rem;
+}
+.reset-request-note span {
+  color: oklch(0.42 0 0);
+  overflow-wrap: anywhere;
+}
+.password-reset-panel {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  margin: 4px 0;
+  padding: 12px 14px;
+  border: 1px solid oklch(0.9 0 0);
+  border-radius: 8px;
+  background: var(--brand-paper);
+}
+.password-reset-panel > div {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+.password-reset-panel span {
+  color: oklch(0.48 0 0);
+  font-size: 0.78rem;
+}
+.nav-badge {
+  display: inline-grid;
+  min-width: 20px;
+  height: 20px;
+  place-items: center;
+  margin-left: auto;
+  padding-inline: 6px;
+  border-radius: 999px;
+  background: var(--brand-orange);
+  color: var(--brand-charcoal);
+  font-size: 0.7rem;
+  font-weight: 800;
+  line-height: 1;
+}
+@media (max-width: 680px) {
+  .password-setup {
+    flex-direction: column;
+    margin-block: 24px;
+    padding: 22px 18px;
+  }
+  .password-setup-form .brand-button {
+    justify-self: stretch;
+  }
+  .password-reset-panel {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .student-row > .brand-button {
+    flex: 1 1 100%;
+    order: 5;
+  }
+  .admin-sidebar nav button.active .nav-badge {
+    background: var(--brand-charcoal);
+    color: white;
+  }
+}
+
+/* ==========================================================================
+   Settings
+   ========================================================================== */
+html[data-text="large"] {
+  font-size: 112.5%;
+}
+html[data-motion="reduced"] *,
+html[data-motion="reduced"] *::before,
+html[data-motion="reduced"] *::after {
+  scroll-behavior: auto !important;
+  animation-duration: 0.01ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.01ms !important;
+}
+.settings-page {
+  padding-bottom: 12px;
+}
+.settings-heading {
+  margin: 22px 0 20px;
+}
+.settings-heading h1 {
+  margin: 4px 0 0;
+  font-size: 2rem;
+  letter-spacing: -0.04em;
+}
+.settings-panel {
+  display: grid;
+  max-width: 820px;
+  gap: 18px;
+  padding-top: 20px;
+}
+.settings-page .settings-panel {
+  padding-top: 0;
+}
+.settings-card {
+  overflow: hidden;
+  border: 1px solid oklch(0.9 0.012 255);
+  border-radius: 16px;
+  background: white;
+  box-shadow: var(--portal-shadow-card);
+  animation: motion-fade-up 480ms var(--ease-out) backwards;
+}
+.settings-card:nth-child(2) {
+  animation-delay: 60ms;
+}
+.settings-card:nth-child(3) {
+  animation-delay: 120ms;
+}
+.settings-card:nth-child(n + 4) {
+  animation-delay: 180ms;
+}
+.settings-card > header {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 18px 22px;
+  border-bottom: 1px solid oklch(0.93 0 0);
+  background: oklch(0.99 0.004 255);
+}
+.settings-card > header h2 {
+  margin: 0;
+  font-size: 1.05rem;
+}
+.settings-card > header p {
+  margin: 2px 0 0;
+  color: oklch(0.48 0 0);
+  font-size: 0.82rem;
+}
+.settings-card-icon {
+  display: grid;
+  width: 40px;
+  height: 40px;
+  flex: 0 0 auto;
+  place-items: center;
+  border-radius: 12px;
+  background: oklch(0.95 0.035 232);
+  color: var(--brand-blue);
+}
+.settings-card-icon svg {
+  width: 20px;
+  height: 20px;
+}
+.settings-card-body {
+  display: grid;
+  gap: 16px;
+  padding: 20px 22px 22px;
+}
+.settings-identity {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+.settings-identity .student-avatar {
+  width: 52px;
+  height: 52px;
+  font-size: 1.2rem;
+}
+.settings-identity > div {
+  display: grid;
+  gap: 2px;
+}
+.settings-identity span {
+  color: oklch(0.48 0 0);
+  font-size: 0.82rem;
+}
+.settings-facts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 12px;
+  margin: 0;
+}
+.settings-facts > div {
+  padding: 12px 14px;
+  border-radius: 10px;
+  background: var(--brand-paper);
+}
+.settings-facts dt {
+  color: oklch(0.5 0 0);
+  font-size: 0.68rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.settings-facts dd {
+  margin: 3px 0 0;
+  overflow-wrap: anywhere;
+  font-size: 0.92rem;
+  font-weight: 600;
+}
+.settings-form {
+  display: grid;
+  gap: 8px;
+}
+.settings-form > label {
+  margin-top: 4px;
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+.settings-form > label span {
+  color: oklch(0.53 0 0);
+  font-weight: 400;
+}
+.settings-form .form-hint {
+  margin: 0;
+}
+.settings-form .form-hint.warn {
+  color: var(--brand-red);
+}
+.settings-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 6px;
+}
+.settings-password {
+  display: grid;
+  gap: 12px;
+}
+.settings-status {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0;
+  font-size: 0.9rem;
+}
+.settings-status svg {
+  width: 18px;
+  height: 18px;
+  color: var(--brand-blue);
+}
+.settings-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 0;
+  padding: 11px 14px;
+  border-radius: 10px;
+  font-size: 0.84rem;
+  line-height: 1.5;
+  animation: motion-fade-up 300ms var(--ease-out) backwards;
+}
+.settings-note svg {
+  width: 17px;
+  height: 17px;
+  flex: 0 0 auto;
+  margin-top: 2px;
+}
+.settings-note.success {
+  background: oklch(0.96 0.035 152);
+  color: oklch(0.38 0.1 152);
+}
+.settings-note.error {
+  background: oklch(0.97 0.02 28);
+  color: var(--brand-red);
+}
+.settings-note.pending {
+  background: oklch(0.97 0.03 72);
+  color: oklch(0.42 0.09 62);
+}
+.settings-divider {
+  height: 1px;
+  background: oklch(0.93 0 0);
+}
+.settings-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+}
+.settings-row > div {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+.settings-row > div span {
+  color: oklch(0.48 0 0);
+  font-size: 0.8rem;
+  line-height: 1.45;
+}
+.settings-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.switch {
+  position: relative;
+  width: 50px;
+  height: 30px;
+  flex: 0 0 auto;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: oklch(0.82 0 0);
+  cursor: pointer;
+  transition: background-color var(--dur-base) ease;
+}
+.switch span {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: white;
+  box-shadow: 0 2px 6px oklch(0 0 0 / 25%);
+  transition: transform var(--dur-base) var(--ease-spring);
+}
+.switch[aria-checked="true"] {
+  background: var(--brand-blue);
+}
+.switch[aria-checked="true"] span {
+  transform: translateX(20px);
+}
+.switch:focus-visible {
+  outline: 3px solid oklch(0.696 0.172 232 / 35%);
+  outline-offset: 2px;
+}
+@media (max-width: 680px) {
+  .settings-card > header,
+  .settings-card-body {
+    padding-inline: 16px;
+  }
+  .settings-row {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .settings-row .switch {
+    align-self: flex-start;
+  }
+  .settings-actions > button {
+    flex: 1 1 0;
+  }
+  .settings-links > a {
+    flex: 1 1 100%;
+  }
+  .settings-page {
+    width: min(100% - 32px, 520px);
+  }
+}
+
+/* ==========================================================================
+   Mobile experience
+   Touch ergonomics for any coarse pointer, then layout changes for phones.
+   ========================================================================== */
+html {
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+:is(a, button, label, select, summary, [role="button"]) {
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+.viewer-backdrop {
+  overscroll-behavior: contain;
+}
+.portal-footer {
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+@keyframes motion-sheet-in {
+  from {
+    transform: translateY(100%);
+  }
+}
+@keyframes motion-sheet-out {
+  to {
+    transform: translateY(100%);
+  }
+}
+
+@media (pointer: coarse) {
+  /* 16px stops iOS Safari from zooming the page when a field is focused. */
+  .portal-shell :is(input:not([type="checkbox"], [type="radio"], [type="file"]), select, textarea) {
+    font-size: 16px;
+  }
+  .portal-shell :is(.brand-button, .outline-button, .danger-outline-button) {
+    min-height: 46px;
+  }
+  .portal-shell
+    :is(
+      .icon-button,
+      .back-link,
+      .folder-back,
+      .module-parent-button,
+      .text-button,
+      .recovery-link,
+      .registration-link,
+      .materials-tabs button,
+      .checkbox-label
+    ) {
+    min-height: 44px;
+  }
+  .portal-shell .icon-button {
+    min-width: 44px;
+  }
+  .portal-shell :is(.back-link, .folder-back, .text-button, .recovery-link, .registration-link) {
+    display: inline-flex;
+    align-items: center;
+  }
+  .utility-contact a,
+  .footer-inner a,
+  .login-help a {
+    display: inline-flex;
+    min-height: 36px;
+    align-items: center;
+  }
+  .utility-contact a:last-child {
+    min-height: 0;
+  }
+  .materials-tabs button,
+  .admin-sidebar nav button {
+    -webkit-user-select: none;
+    user-select: none;
+  }
+}
+
+@media (pointer: coarse), (max-width: 760px) {
+  /* Keep the page from scrolling behind an open dialog. */
+  body:has(.viewer-backdrop) {
+    overflow: hidden;
+  }
+}
+
+@media (max-width: 680px) {
+  .brand-lockup img {
+    width: 96px;
+  }
+  .portal-toast {
+    right: 12px;
+    bottom: max(12px, env(safe-area-inset-bottom));
+    left: 12px;
+    max-width: none;
+  }
+
+  /* Admin navigation becomes a sticky, swipeable tab strip. */
+  .admin-layout {
+    display: block;
+  }
+  .admin-sidebar {
+    position: sticky;
+    top: 0;
+    z-index: 20;
+    padding: 8px 12px;
+    overflow: visible;
+    box-shadow: 0 8px 18px oklch(0 0 0 / 16%);
+  }
+  .admin-sidebar .eyebrow,
+  .admin-help {
+    display: none;
+  }
+  .admin-sidebar-inner {
+    display: contents;
+  }
+  .admin-sidebar nav {
+    display: flex;
+    gap: 6px;
+    margin: 0;
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    scroll-snap-type: x proximity;
+    scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
+  }
+  .admin-sidebar nav::-webkit-scrollbar {
+    display: none;
+  }
+  .admin-sidebar nav button {
+    flex: 0 0 auto;
+    min-height: 44px;
+    padding: 8px 16px;
+    border-radius: 999px;
+    box-shadow: none;
+    scroll-snap-align: center;
+    white-space: nowrap;
+  }
+  .admin-sidebar nav button.active {
+    background: var(--brand-orange);
+    box-shadow: none;
+    color: var(--brand-charcoal);
+  }
+
+  /* Rows: identity on the first line, status and action beneath. */
+  .student-row {
+    flex-wrap: wrap;
+    row-gap: 10px;
+  }
+  .student-row-copy {
+    flex: 1 1 calc(100% - 56px);
+    min-width: 0;
+  }
+  .student-row > .outline-button {
+    margin-left: auto;
+  }
+  .account-identifier {
+    padding-inline: 22px;
+    overflow-wrap: anywhere;
+  }
+
+  /* Forms open as bottom sheets; the content viewer stays full screen. */
+  .viewer-backdrop {
+    align-items: end;
+  }
+  .viewer-panel {
+    height: 100dvh;
+    max-height: 100dvh;
+  }
+  .content-form-card,
+  .student-edit-card {
+    width: 100%;
+    height: auto;
+    max-height: calc(100dvh - 12px);
+    border-radius: 22px 22px 0 0;
+    animation-name: motion-sheet-in;
+    animation-duration: 420ms;
+  }
+  .presence[data-closing] :is(.content-form-card, .student-edit-card) {
+    animation-name: motion-sheet-out;
+    animation-duration: 240ms;
+  }
+  .registration-review-card {
+    min-height: 100dvh;
+    max-height: 100dvh;
+  }
+  .form-actions {
+    position: sticky;
+    bottom: 0;
+    padding-bottom: calc(4px + env(safe-area-inset-bottom));
+    background: white;
+  }
+  .form-actions > button {
+    flex: 1 1 0;
+  }
+  .viewer-footer {
+    padding-bottom: calc(13px + env(safe-area-inset-bottom));
   }
 }
