@@ -96,3 +96,26 @@ export function readPasswordState(appMetadata: Record<string, unknown> | null | 
       typeof changedAt === "string" && Number.isFinite(Date.parse(changedAt)) ? changedAt : null,
   };
 }
+
+/** Checks the shape, birth date and check digit of a South African ID number. */
+export function isValidSouthAfricanId(value: string): boolean {
+  if (!/^\d{13}$/.test(value)) return false;
+  const year = Number(value.slice(0, 2));
+  const month = Number(value.slice(2, 4));
+  const day = Number(value.slice(4, 6));
+  const realDate = [1900, 2000].some((century) => {
+    const date = new Date(Date.UTC(century + year, month - 1, day));
+    return date.getUTCMonth() === month - 1 && date.getUTCDate() === day;
+  });
+  if (!realDate) return false;
+  let sum = 0;
+  for (let index = 0; index < 13; index += 1) {
+    let digit = Number(value[12 - index]);
+    if (index % 2 === 1) {
+      digit *= 2;
+      if (digit > 9) digit -= 9;
+    }
+    sum += digit;
+  }
+  return sum % 10 === 0;
+}

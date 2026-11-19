@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   detectLearningKind,
   isRecentlyDeleted,
+  isValidSouthAfricanId,
   readPasswordState,
   titleFromFilename,
   validateNewPassword,
@@ -74,6 +75,19 @@ describe("student password rules", () => {
       changedAt: "2026-11-01T08:00:00.000Z",
     });
   });
+});
+
+describe("South African ID validation", () => {
+  it("accepts a well-formed ID with a correct check digit", () => {
+    expect(isValidSouthAfricanId("8001015009087")).toBe(true);
+  });
+
+  it.each(["8001015009088", "800101500908", "8013015009087", "8002305009087", "abcdefghijklm"])(
+    "rejects %s",
+    (value) => {
+      expect(isValidSouthAfricanId(value)).toBe(false);
+    },
+  );
 });
 
 describe("portal preferences", () => {

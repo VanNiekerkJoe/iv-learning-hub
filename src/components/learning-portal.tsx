@@ -6,7 +6,6 @@ import {
   useState,
   type CSSProperties,
   type FormEvent,
-  type InputHTMLAttributes,
   type ReactNode,
   type SyntheticEvent,
 } from "react";
@@ -42,10 +41,8 @@ import {
 
 import {
   acceptCopyrightNotice,
-  beginStudentRegistration,
   changePortalContentState,
   completePasswordSetup,
-  completeStudentRegistration,
   deletePortalModule,
   getLearningDashboard,
   getLearningModule,
@@ -64,7 +61,6 @@ import {
   setupStarterModules,
   updateStudentPortalAccess,
   reviewStudentRegistration,
-  type StudentRegistrationInput,
 } from "@/lib/portal.functions";
 import {
   detectLearningKind,
@@ -74,6 +70,7 @@ import {
   validateNewPassword,
 } from "@/lib/learning-domain";
 import { AnimatedNumber, Presence } from "@/components/motion";
+import { RegistrationExperience } from "@/components/registration-form";
 import {
   AdminSkeleton,
   CommandPalette,
@@ -689,6 +686,7 @@ export function LearningPortal() {
             progress={progress}
             onClose={() => setViewer(null)}
             onNotice={setPageNotice}
+            onProgressSaved={() => void loadDashboard()}
           />
         )}
       </Presence>
@@ -1137,522 +1135,15 @@ function LoginScreen({
 }
 
 export function StudentRegistrationPage() {
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
-  const [reference, setReference] = useState("");
-  const [identityType, setIdentityType] = useState<"south-african" | "passport">("south-african");
-  const [homeLanguage, setHomeLanguage] = useState("English");
-  const [employed, setEmployed] = useState(false);
-  const [files, setFiles] = useState<{
-    identity: File | null;
-    education: File | null;
-    payment: File | null;
-  }>({ identity: null, education: null, payment: null });
-
-  async function submit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    setBusy(true);
-    setError("");
-    try {
-      if (!files.identity || !files.education || !files.payment) {
-        throw new Error("Upload your ID or passport, matric document, and proof of payment.");
-      }
-      const form = new FormData(event.currentTarget);
-      const documentInput = (file: File) => ({
-        name: file.name,
-        type: file.type,
-        size: file.size,
-      });
-      const input: StudentRegistrationInput = {
-        fullNames: String(form.get("fullNames") ?? ""),
-        surname: String(form.get("surname") ?? ""),
-        cellPhone: String(form.get("cellPhone") ?? ""),
-        southAfricanIdNumber:
-          identityType === "south-african" ? String(form.get("southAfricanIdNumber") ?? "") : "",
-        passportNumber: identityType === "passport" ? String(form.get("passportNumber") ?? "") : "",
-        passportCountry:
-          identityType === "passport" ? String(form.get("passportCountry") ?? "") : "",
-        gender: String(form.get("gender") ?? ""),
-        ethnicity: String(form.get("ethnicity") ?? ""),
-        homeLanguage:
-          homeLanguage === "Other" ? String(form.get("otherLanguage") ?? "") : homeLanguage,
-        fullHomeAddress: String(form.get("fullHomeAddress") ?? ""),
-        province: String(form.get("province") ?? ""),
-        postalCode: String(form.get("postalCode") ?? ""),
-        email: String(form.get("email") ?? ""),
-        passedGrade12: form.get("passedGrade12") === "yes",
-        qualificationName: String(form.get("qualificationName") ?? ""),
-        employedAtRealEstateCompany: employed,
-        realEstateCompany: employed ? String(form.get("realEstateCompany") ?? "") : "",
-        paymentPlan: form.get("paymentPlan") === "monthly" ? "monthly" : "once_off",
-        declarationAccepted: form.get("declarationAccepted") === "on",
-        signatureName: String(form.get("signatureName") ?? ""),
-        signatureDate: String(form.get("signatureDate") ?? ""),
-        documents: {
-          identity: documentInput(files.identity),
-          education: documentInput(files.education),
-          payment: documentInput(files.payment),
-        },
-        website: String(form.get("website") ?? ""),
-      };
-      const started = await beginStudentRegistration({ data: input });
-      if (started.ignored) {
-        setReference("Registration received");
-        return;
-      }
-      const uploads: [File, (typeof started.uploads)[keyof typeof started.uploads]][] = [
-        [files.identity, started.uploads.identity],
-        [files.education, started.uploads.education],
-        [files.payment, started.uploads.payment],
-      ];
-      for (const [file, upload] of uploads) {
-        const { error: uploadError } = await supabase.storage
-          .from("student-registration-documents")
-          .uploadToSignedUrl(upload.path, upload.token, file, { contentType: file.type });
-        if (uploadError) {
-          throw new Error(
-            `${file.name} could not be uploaded securely. Please try submitting again.`,
-          );
-        }
-      }
-      await completeStudentRegistration({
-        data: {
-          registrationId: started.registrationId,
-          submissionToken: started.submissionToken,
-        },
-      });
-      setReference(started.registrationId.slice(0, 8).toUpperCase());
-      window.scrollTo({ top: 0, behavior: "smooth" });
-    } catch (caught) {
-      setError(messageFrom(caught));
-    } finally {
-      setBusy(false);
-    }
-  }
-
   return (
     <PortalFrame profile={null} onSignOut={() => undefined}>
-      <section className="registration-page portal-container">
+      <section className="reg-page portal-container">
         <a className="back-link registration-back" href="/">
           <ArrowLeft aria-hidden="true" /> Back to student sign in
         </a>
-        {reference ? (
-          <section className="registration-success" role="status">
-            <span className="message-icon">
-              <Check aria-hidden="true" />
-            </span>
-            <p className="eyebrow">REGISTRATION SUBMITTED</p>
-            <h1>Thank you. Your application is with our admin team.</h1>
-            <p>
-              Your reference is <strong>REG-{reference}</strong>. Keep this reference for any
-              questions. Your documents are private and will only be reviewed by an IV Consulting
-              administrator.
-            </p>
-            <p>
-              Once approved, your student account details and sign-in link will be provided to you.
-              The first time you sign in, you’ll be asked to create your own password.
-            </p>
-            <a className="brand-button" href="/">
-              Return to sign in <ArrowRight aria-hidden="true" />
-            </a>
-          </section>
-        ) : (
-          <>
-            <div className="registration-title-band">
-              <div>
-                <p className="eyebrow">QCTO NQF4 · ONLINE APPLICATION</p>
-                <h1>Registration for NQF4 – New QCTO System</h1>
-                <p>
-                  One simple application. Four short steps. Your information and documents are
-                  securely reviewed by our administration team.
-                </p>
-                <div className="registration-hero-meta">
-                  <span>
-                    <Clock3 aria-hidden="true" /> About 10–15 minutes
-                  </span>
-                  <span>
-                    <ShieldCheck aria-hidden="true" /> Private & secure
-                  </span>
-                </div>
-              </div>
-              <span className="registration-title-mark">
-                <GraduationCap aria-hidden="true" />
-              </span>
-            </div>
-
-            <aside className="registration-requirements" aria-label="Required documents">
-              <div className="registration-requirements-heading">
-                <span>
-                  <FileText aria-hidden="true" />
-                </span>
-                <div>
-                  <p className="eyebrow">BEFORE YOU BEGIN</p>
-                  <h2>Prepare these three documents</h2>
-                </div>
-              </div>
-              <div className="registration-requirement-list">
-                <span>
-                  <b>1</b> Certified ID or passport
-                </span>
-                <span>
-                  <b>2</b> Matric certificate or affidavit
-                </span>
-                <span>
-                  <b>3</b> Proof of payment
-                </span>
-              </div>
-              <p className="registration-file-rule">
-                PDF, JPG or PNG · maximum 10 MB each. Please do not send official documents on
-                WhatsApp.
-              </p>
-            </aside>
-
-            <form className="registration-form" onSubmit={(event) => void submit(event)}>
-              <section className="registration-form-section">
-                <div className="registration-section-number">01</div>
-                <div className="registration-section-title">
-                  <p className="eyebrow">PERSONAL DETAILS</p>
-                  <h2>Tell us about yourself</h2>
-                </div>
-                <div className="registration-fields">
-                  <RegistrationField
-                    label="Full names on ID"
-                    name="fullNames"
-                    autoComplete="given-name"
-                  />
-                  <RegistrationField label="Surname" name="surname" autoComplete="family-name" />
-                  <RegistrationField
-                    label="Cell phone number"
-                    name="cellPhone"
-                    type="tel"
-                    autoComplete="tel"
-                  />
-                  <fieldset className="registration-choice identity-choice">
-                    <legend>Choose your identification type</legend>
-                    <label className={identityType === "south-african" ? "selected" : ""}>
-                      <input
-                        type="radio"
-                        name="identityType"
-                        value="south-african"
-                        checked={identityType === "south-african"}
-                        onChange={() => setIdentityType("south-african")}
-                      />
-                      South African ID
-                    </label>
-                    <label className={identityType === "passport" ? "selected" : ""}>
-                      <input
-                        type="radio"
-                        name="identityType"
-                        value="passport"
-                        checked={identityType === "passport"}
-                        onChange={() => setIdentityType("passport")}
-                      />
-                      Passport
-                    </label>
-                  </fieldset>
-                  {identityType === "south-african" ? (
-                    <RegistrationField
-                      label="South African ID number"
-                      name="southAfricanIdNumber"
-                      inputMode="numeric"
-                      maxLength={13}
-                    />
-                  ) : (
-                    <>
-                      <RegistrationField label="Passport number" name="passportNumber" />
-                      <RegistrationField label="Country of issue" name="passportCountry" />
-                    </>
-                  )}
-                  <RegistrationSelect label="Gender" name="gender" options={["Male", "Female"]} />
-                  <RegistrationSelect
-                    label="Ethnicity"
-                    name="ethnicity"
-                    options={["Indian", "Coloured", "African", "White"]}
-                  />
-                  <RegistrationSelect
-                    label="Home language"
-                    name="homeLanguageChoice"
-                    value={homeLanguage}
-                    onChange={setHomeLanguage}
-                    options={["English", "Other"]}
-                  />
-                  {homeLanguage === "Other" ? (
-                    <RegistrationField
-                      label="Please specify your home language"
-                      name="otherLanguage"
-                    />
-                  ) : null}
-                  <RegistrationField
-                    label="Full home address"
-                    name="fullHomeAddress"
-                    autoComplete="street-address"
-                    wide
-                  />
-                  <RegistrationField
-                    label="Province"
-                    name="province"
-                    autoComplete="address-level1"
-                  />
-                  <RegistrationField
-                    label="Postal code"
-                    name="postalCode"
-                    autoComplete="postal-code"
-                    inputMode="numeric"
-                  />
-                  <RegistrationField
-                    label="Email address"
-                    name="email"
-                    type="email"
-                    autoComplete="email"
-                    autoCapitalize="none"
-                    wide
-                  />
-                </div>
-              </section>
-
-              <section className="registration-form-section">
-                <div className="registration-section-number">02</div>
-                <div className="registration-section-title">
-                  <p className="eyebrow">EDUCATION & EMPLOYMENT</p>
-                  <h2>Your study and work details</h2>
-                </div>
-                <div className="registration-fields">
-                  <RegistrationSelect
-                    label="Did you pass Grade 12?"
-                    name="passedGrade12"
-                    options={["Yes", "No"]}
-                    optionValues={["yes", "no"]}
-                  />
-                  <RegistrationField
-                    label="Name of qualification"
-                    name="qualificationName"
-                    placeholder="Your highest qualification"
-                  />
-                  <fieldset className="registration-choice">
-                    <legend>Are you currently employed at a real estate company?</legend>
-                    <label className={!employed ? "selected" : ""}>
-                      <input
-                        type="radio"
-                        name="employment"
-                        checked={!employed}
-                        onChange={() => setEmployed(false)}
-                      />
-                      No
-                    </label>
-                    <label className={employed ? "selected" : ""}>
-                      <input
-                        type="radio"
-                        name="employment"
-                        checked={employed}
-                        onChange={() => setEmployed(true)}
-                      />
-                      Yes
-                    </label>
-                  </fieldset>
-                  {employed ? (
-                    <RegistrationField
-                      label="Which company do you work for?"
-                      name="realEstateCompany"
-                      wide
-                    />
-                  ) : null}
-                </div>
-              </section>
-
-              <section className="registration-form-section">
-                <div className="registration-section-number">03</div>
-                <div className="registration-section-title">
-                  <p className="eyebrow">UPLOAD DOCUMENTS</p>
-                  <h2>Add your supporting documents</h2>
-                </div>
-                <div className="registration-upload-grid">
-                  <RegistrationFileUpload
-                    label="Certified ID or passport"
-                    hint="Front and back, or the identity page"
-                    file={files.identity}
-                    onChange={(file) => setFiles((current) => ({ ...current, identity: file }))}
-                  />
-                  <RegistrationFileUpload
-                    label="Matric certificate or affidavit"
-                    hint="Use the affidavit wording from the original form"
-                    file={files.education}
-                    onChange={(file) => setFiles((current) => ({ ...current, education: file }))}
-                  />
-                  <RegistrationFileUpload
-                    label="Proof of payment"
-                    hint="Receipt, transfer confirmation or payment slip"
-                    file={files.payment}
-                    onChange={(file) => setFiles((current) => ({ ...current, payment: file }))}
-                  />
-                </div>
-              </section>
-
-              <section className="registration-form-section">
-                <div className="registration-section-number">04</div>
-                <div className="registration-section-title">
-                  <p className="eyebrow">PAYMENT PLAN & DECLARATION</p>
-                  <h2>Choose how you would like to be invoiced</h2>
-                </div>
-                <fieldset className="payment-plan-options">
-                  <legend>Payment plan</legend>
-                  <label>
-                    <input
-                      type="radio"
-                      name="paymentPlan"
-                      value="once_off"
-                      defaultChecked
-                      required
-                    />
-                    <span>
-                      <strong>R6,000 once-off</strong>
-                      <small>One full payment</small>
-                    </span>
-                  </label>
-                  <label>
-                    <input type="radio" name="paymentPlan" value="monthly" required />
-                    <span>
-                      <strong>R1,200 × 6 months</strong>
-                      <small>Total: R7,200</small>
-                    </span>
-                  </label>
-                </fieldset>
-                <div className="registration-declaration">
-                  <p>
-                    I understand that registration will only be finalised once my fully completed
-                    form, the required identity and matric documents, and proof of payment have been
-                    received and reviewed.
-                  </p>
-                  <label>
-                    <input type="checkbox" name="declarationAccepted" required />
-                    <span>
-                      I have completed this form honestly and accept the declaration above.
-                    </span>
-                  </label>
-                </div>
-                <div className="registration-signature-fields">
-                  <RegistrationField
-                    label="Electronic signature — type your full name"
-                    name="signatureName"
-                  />
-                  <RegistrationField
-                    label="Date"
-                    name="signatureDate"
-                    type="date"
-                    defaultValue={new Date().toISOString().slice(0, 10)}
-                  />
-                </div>
-              </section>
-
-              <label className="registration-honeypot" aria-hidden="true">
-                Website
-                <input type="text" name="website" tabIndex={-1} autoComplete="off" />
-              </label>
-              {error ? (
-                <p className="registration-error inline-error" role="alert">
-                  {error}
-                </p>
-              ) : null}
-              <div className="registration-submit-bar">
-                <p>
-                  <ShieldCheck aria-hidden="true" /> Your application and documents are securely
-                  sent for administrator review.
-                </p>
-                <button className="brand-button" type="submit" disabled={busy}>
-                  {busy ? <LoaderCircle className="spin" aria-hidden="true" /> : null}
-                  {busy ? "Uploading securely…" : "Submit registration"}
-                  {!busy ? <ArrowRight aria-hidden="true" /> : null}
-                </button>
-              </div>
-            </form>
-          </>
-        )}
+        <RegistrationExperience />
       </section>
     </PortalFrame>
-  );
-}
-
-function RegistrationField({
-  label,
-  name,
-  wide = false,
-  ...inputProps
-}: {
-  label: string;
-  name: string;
-  wide?: boolean;
-} & Omit<InputHTMLAttributes<HTMLInputElement>, "name" | "id">) {
-  return (
-    <label className={`registration-field${wide ? " wide" : ""}`}>
-      <span>{label}</span>
-      <input id={`registration-${name}`} name={name} required {...inputProps} />
-    </label>
-  );
-}
-
-function RegistrationSelect({
-  label,
-  name,
-  options,
-  optionValues,
-  value,
-  onChange,
-}: {
-  label: string;
-  name: string;
-  options: string[];
-  optionValues?: string[];
-  value?: string;
-  onChange?: (value: string) => void;
-}) {
-  return (
-    <label className="registration-field">
-      <span>{label}</span>
-      <select
-        id={`registration-${name}`}
-        name={name}
-        required
-        value={value}
-        onChange={(event) => onChange?.(event.target.value)}
-      >
-        {!value ? <option value="">Choose an option</option> : null}
-        {options.map((option, index) => (
-          <option value={optionValues?.[index] ?? option} key={option}>
-            {option}
-          </option>
-        ))}
-      </select>
-    </label>
-  );
-}
-
-function RegistrationFileUpload({
-  label,
-  hint,
-  file,
-  onChange,
-}: {
-  label: string;
-  hint: string;
-  file: File | null;
-  onChange: (file: File | null) => void;
-}) {
-  return (
-    <label className={`registration-upload${file ? " has-file" : ""}`}>
-      <span className="registration-upload-icon">
-        {file ? <Check aria-hidden="true" /> : <FileText aria-hidden="true" />}
-      </span>
-      <strong>{label}</strong>
-      <span>{file ? file.name : hint}</span>
-      <small>
-        {file ? `${Math.ceil(file.size / 1024)} KB · click to replace` : "Choose PDF, JPG or PNG"}
-      </small>
-      <input
-        type="file"
-        accept=".pdf,.jpg,.jpeg,.png,application/pdf,image/jpeg,image/png"
-        required
-        onChange={(event) => onChange(event.target.files?.[0] ?? null)}
-      />
-    </label>
   );
 }
 
@@ -2275,6 +1766,7 @@ function ContentViewer({
   progress,
   onClose,
   onNotice,
+  onProgressSaved,
 }: {
   item: ContentItem;
   url: string;
@@ -2282,6 +1774,7 @@ function ContentViewer({
   progress: LearningProgress[];
   onClose: () => void;
   onNotice: (notice: string) => void;
+  onProgressSaved: () => void;
 }) {
   const savedProgress = progress.find((entry) => entry.content_id === item.id);
   const lastSaved = useRef(0);
@@ -2331,6 +1824,7 @@ function ContentViewer({
   async function saveProgress(status: "in_progress" | "completed", positionSeconds: number) {
     try {
       await saveLearningProgress({ data: { contentId: item.id, status, positionSeconds } });
+      onProgressSaved();
     } catch (error) {
       onNotice(messageFrom(error));
     }
