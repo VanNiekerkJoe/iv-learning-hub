@@ -1,4 +1,5 @@
 import {
+  memo,
   useCallback,
   useEffect,
   useRef,
@@ -71,6 +72,13 @@ const PROVINCES = [
   "North West",
   "Western Cape",
   "Outside South Africa",
+];
+
+const GENDERS = ["Male", "Female"];
+const ETHNICITIES = ["African", "Coloured", "Indian", "White"];
+const GRADE12_OPTIONS = [
+  { value: "yes", label: "Yes, I passed Grade 12" },
+  { value: "no", label: "No" },
 ];
 
 const LANGUAGES = [
@@ -187,7 +195,7 @@ function Field({
   );
 }
 
-function SelectField({
+const SelectField = memo(function SelectField({
   label,
   name,
   options,
@@ -206,26 +214,18 @@ function SelectField({
   wide?: boolean;
   placeholder?: string;
 }) {
-  const [message, setMessage] = useState("");
+  // Errors only appear after a submit attempt (onInvalid) and clear as soon as a value is picked.
+  // There is deliberately no onBlur validation: opening a native dropdown blurs the select, and
+  // re-rendering a controlled <select> while its popup is open discards the user's selection.
+  const [submitError, setSubmitError] = useState("");
   const ref = useRef<HTMLSelectElement>(null);
   const id = `reg-${name}`;
+  const message = customError || submitError;
 
+  // Keeps form.checkValidity() failing while a custom rule (e.g. Grade 12 = No) is broken.
   useEffect(() => {
-    const element = ref.current;
-    if (!element) return;
-    element.setCustomValidity(customError);
-    setMessage((previous) =>
-      customError
-        ? customError
-        : previous && !element.validity.valid
-          ? describeProblem(element, undefined)
-          : "",
-    );
+    ref.current?.setCustomValidity(customError);
   }, [customError]);
-
-  function check(element: HTMLSelectElement) {
-    setMessage(describeProblem(element, undefined));
-  }
 
   return (
     <div className={`reg-field${wide ? " wide" : ""}${message ? " invalid" : ""}`}>
@@ -239,11 +239,12 @@ function SelectField({
         aria-invalid={Boolean(message)}
         aria-describedby={message ? `${id}-error` : undefined}
         onChange={(event) => {
+          setSubmitError("");
           onChange(event.target.value);
-          if (message) check(event.currentTarget);
         }}
-        onBlur={(event) => check(event.currentTarget)}
-        onInvalid={(event) => check(event.currentTarget)}
+        onInvalid={(event) =>
+          setSubmitError(event.currentTarget.validity.valueMissing ? "This is required." : "")
+        }
       >
         <option value="">{placeholder}</option>
         {options.map((option) => {
@@ -262,7 +263,7 @@ function SelectField({
       )}
     </div>
   );
-}
+});
 
 function ChoiceGroup<T extends string>({
   legend,
@@ -854,14 +855,14 @@ export function RegistrationExperience() {
                 <SelectField
                   label="Gender"
                   name="gender"
-                  options={["Male", "Female"]}
+                  options={GENDERS}
                   value={gender}
                   onChange={setGender}
                 />
                 <SelectField
                   label="Ethnicity"
                   name="ethnicity"
-                  options={["African", "Coloured", "Indian", "White"]}
+                  options={ETHNICITIES}
                   value={ethnicity}
                   onChange={setEthnicity}
                 />
@@ -910,10 +911,7 @@ export function RegistrationExperience() {
                 <SelectField
                   label="Did you pass Grade 12?"
                   name="passedGrade12"
-                  options={[
-                    { value: "yes", label: "Yes, I passed Grade 12" },
-                    { value: "no", label: "No" },
-                  ]}
+                  options={GRADE12_OPTIONS}
                   value={passedGrade12}
                   onChange={setPassedGrade12}
                   customError={grade12Problem}
